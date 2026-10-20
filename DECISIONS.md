@@ -112,3 +112,18 @@ Not taken from the mock-prototype brief, on purpose:
 Fixed along the way: public images (.webp) were redirected to /login by the proxy;
 red "danger" buttons were never styled (class name built dynamically, so Tailwind skipped it);
 added a real password reset ("Forgot password?" -> email link -> new password).
+
+## Employee self-service requests (2026-10-20)
+
+| Request | Effect once an Admin approves |
+|---|---|
+| Leave: annual, sick, casual (paid) | days shown as leave, no absence cut |
+| Leave: unpaid | shown as unpaid leave, cut like an absence |
+| Explain a late arrival | that day shows "Late, excused", no late cut |
+| Fix a missing punch | the stated time is added to the day (raw punches are never edited) |
+
+- Employee requests are **never auto-approved**, even in single-admin mode; an Admin decides. Admins are notified; the employee is notified of the decision.
+- Requests are checked against the employee's own attendance (only a late day can be explained, only a single-punch day fixed; no overlapping leave).
+- **Locked payroll months cannot be changed by a request.** HR/Admin can reopen payroll if needed. (Replaces an arbitrary "60 days back" limit I had first written.)
+- Requests filed more than 3 days (the dispute window setting) after the day are marked as late filings for the Admin.
+- Leave balances / yearly entitlements are **not** enforced: no entitlement rules were given. Tell me the yearly allowance per leave type to add them.

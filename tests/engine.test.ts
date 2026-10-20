@@ -94,3 +94,15 @@ test("gross is prorated for a mid-month joiner and is the same number payroll us
   assert.equal(r.totals.grossPaisa, 200_000 * 11);           // 44,000 / 22 = 2,000 a day
   assert.equal(r.totals.netPaisa, r.totals.grossPaisa! - r.totals.totalDeductionPaisa);
 });
+
+test("approved requests: excused late has no cut, unpaid leave is cut, an added punch completes a day", () => {
+  const r = run(["2026-08-03T17:40:00", "2026-08-04T02:00:00", "2026-08-05T17:05:00"], {
+    excusedLate: new Set(["2026-08-03"]), unpaidLeave: new Set(["2026-08-04"]), addedPunches: ["2026-08-06T02:01:00"] });
+  assert.deepEqual([day(r, "2026-08-03").status, day(r, "2026-08-03").deductionPaisa], ["excused", 0]);
+  assert.equal(day(r, "2026-08-03").lateMinutes, 40);
+  assert.deepEqual([day(r, "2026-08-04").status, day(r, "2026-08-04").deductionPaisa], ["unpaid_leave", 236364]);
+  assert.equal(day(r, "2026-08-05").status, "present");       // was single-punch; added 02:01 out completes it
+  assert.match(day(r, "2026-08-05").note!, /approved request/);
+  assert.equal(r.totals.unpaidLeaveDeductionPaisa, 236364);
+  assert.equal(r.totals.totalDeductionPaisa, r.totals.absenceDeductionPaisa + r.totals.unpaidLeaveDeductionPaisa);
+});

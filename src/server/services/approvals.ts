@@ -34,6 +34,15 @@ export async function listApprovals(ctx: Ctx, f: { status?: string | null; mine?
              when 'holiday' then (
                select jsonb_build_object('date', h.holiday_date, 'name', h.name, 'applies_to_all', h.applies_to_all)
                from hr.holiday h where h.id = r.subject_id)
+             when 'leave' then (
+               select jsonb_build_object('leave', lt.name, 'from', lr.start_date, 'to', lr.end_date,
+                                         'part', replace(lr.part_of_day, '_', ' '), 'paid', case when lt.is_paid then 'yes' else 'no: deducted like an absence' end)
+               from hr.leave_request lr join hr.leave_type lt on lt.id = lr.leave_type_id where lr.id = r.subject_id)
+             when 'attendance_correction' then (
+               select jsonb_build_object('request', case x.kind when 'late' then 'Excuse a late arrival (removes that day''s late cut)' else 'Add a missing punch' end,
+                                         'day', x.business_date, 'time_to_add', to_char(x.added_punch_local, 'DD Mon YYYY HH24:MI'),
+                                         'filed_after_window', case when x.late_filing then 'yes' else null end)
+               from hr.attendance_excuse x where x.id = r.subject_id)
              when 'deduction' then (
                select jsonb_build_object('type', dp.kind, 'month', dp.applies_to_month, 'basis', dp.basis_explanation)
                from hr.deduction_proposal dp where dp.id = r.subject_id)
@@ -88,6 +97,7 @@ export async function decide(ctx: Ctx, approvalId: string, input: z.input<typeof
   if (!req) throw notFound("Approval request");
   await ctx.tx`insert into hr.approval_decision (approval_request_id, decision, reason) values (${approvalId}, ${d.decision}, ${d.reason})`;
   await APPLIERS[req.kind]?.(ctx, d.decision === "approved" ? "approved" : "rejected", req.subject_id);
+  await ctx.tx`select hr.notify_requester(${approvalId})`;   // the employee hears the outcome
 }
 
 /** Single-admin mode (owner decision): when ON, requests are approved

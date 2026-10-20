@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { StatusChip } from "@/components/StatusChip";
 import { withSession } from "@/server/session";
 import { listApprovals } from "@/server/services/approvals";
-import { fmtDateTime, humanize } from "@/lib/format";
+import { fmtDate, fmtDateTime, humanize } from "@/lib/format";
 import type { Approval } from "@/lib/types";
 import { approveAll, decide } from "./actions";
 
@@ -18,14 +18,18 @@ const TABS = [
   { key: "decided", label: "Decided", query: {} },
 ] as const;
 
+const ORDER = ["request", "leave", "from", "to", "day", "time_to_add", "part", "paid", "filed_after_window", "employee", "enrollment_no", "name_in_file", "device", "setting", "value", "source"];
+const show = (v: unknown) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? fmtDate(v) : typeof v === "object" ? JSON.stringify(v) : String(v);
+
 function Subject({ a }: { a: Approval }) {
   if (!a.subject) return null;
-  const rows = Object.entries(a.subject).filter(([, v]) => v !== null && v !== "");
+  const rows = Object.entries(a.subject).filter(([, v]) => v !== null && v !== "")
+    .sort(([x], [y]) => (ORDER.indexOf(x) + 1 || 99) - (ORDER.indexOf(y) + 1 || 99));
   return (
     <dl className="mt-2 grid gap-x-4 gap-y-1 rounded-md bg-surface-2 px-3 py-2 text-[13.5px] sm:grid-cols-2">
       {rows.map(([k, v]) => (
         <div key={k} className="flex gap-2"><dt className="text-ink-3">{humanize(k)}</dt>
-          <dd className="font-medium">{typeof v === "object" ? JSON.stringify(v) : String(v)}</dd></div>
+          <dd className="font-medium">{show(v)}</dd></div>
       ))}
     </dl>
   );

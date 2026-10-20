@@ -73,9 +73,11 @@ export async function calculate(ctx: Ctx, monthInput: string) {
       { kind: "salary", days: employed, amount_paisa: gross, note: prorated ? `${employed} of ${full} working days employed` : "full month" },
       ...(t.late ? [{ kind: "late", days: t.late, minutes: t.lateMinutes, amount_paisa: -t.lateDeductionPaisa, note: `${rep.policy.latePercentOfDay}% of a day each` }] : []),
       ...(t.absent ? [{ kind: "absence", days: t.absent, amount_paisa: -t.absenceDeductionPaisa, note: `${rep.policy.absenceDays} day each` }] : []),
+      ...(t.unpaidLeave ? [{ kind: "unpaid_leave", days: t.unpaidLeave, amount_paisa: -t.unpaidLeaveDeductionPaisa, note: "approved unpaid leave" }] : []),
     ];
     const exceptions = [
       ...(t.leave ? [{ kind: "leave", days: t.leave, note: `${t.leave} day${t.leave === 1 ? "" : "s"} approved leave, not deducted` }] : []),
+      ...(t.excused ? [{ kind: "excused", days: t.excused, note: `${t.excused} late day${t.excused === 1 ? "" : "s"} excused, not deducted` }] : []),
       ...(t.holiday ? [{ kind: "holiday", days: t.holiday, note: `${t.holiday} public holiday${t.holiday === 1 ? "" : "s"}, paid` }] : []),
       ...(t.incomplete ? [{ kind: "needs_review", days: t.incomplete, note: "single-punch days, not deducted" }] : []),
       ...(!p.shift ? [{ kind: "no_shift", note: "no shift set: lateness and absence not checked" }] : []),

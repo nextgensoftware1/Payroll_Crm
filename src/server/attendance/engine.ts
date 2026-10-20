@@ -15,7 +15,7 @@
 
 export type Shift = { code: string; name: string; startMin: number; durationMin: number; windowBeforeMin: number };
 export type Policy = { graceMinutes: number; latePercentOfDay: number; workingDaysDivisor: number; absenceDays: number };
-export type DayStatus = "present" | "late" | "absent" | "incomplete" | "leave" | "holiday" | "rest" | "rest_day_work" | "upcoming" | "not_employed";
+export type DayStatus = "present" | "late" | "absent" | "incomplete" | "leave" | "holiday" | "rest" | "rest_day_work" | "upcoming" | "not_employed" | "excused" | "unpaid_leave";
 
 export type DayRow = {
   date: string; weekday: number; scheduled: boolean; scheduledStart: string | null;
@@ -27,6 +27,7 @@ export type MonthResult = {
   days: DayRow[];
   totals: {
     scheduled: number; present: number; late: number; absent: number; incomplete: number; leave: number; holiday: number;
+    excused: number; unpaidLeave: number; unpaidLeaveDeductionPaisa: number;
     restDayWork: number; lateMinutes: number; workedMinutes: number;
     dailyRatePaisa: number | null; latePenaltyPaisa: number | null;
     lateDeductionPaisa: number; absenceDeductionPaisa: number; totalDeductionPaisa: number;
@@ -68,11 +69,15 @@ export function computeMonth(a: {
   shift: Shift | null; workdays: number[]; punches: string[];
   monthlyPaisa: number | null; policy: Policy; holidays?: Set<string>; leave?: Set<string>;
   employedFrom?: string | null; employedTo?: string | null; // joining date / exit date (inclusive)
+  unpaidLeave?: Set<string>;   // approved UNPAID leave: deducted like an absence, shown as leave
+  excusedLate?: Set<string>;   // approved late explanations: no late cut
+  addedPunches?: string[];     // approved missing-punch fixes (local time); raw punches are never edited
 }): MonthResult {
   const days = monthDays(a.month);
   const byDay = new Map<string, string[]>();
+  const added = new Set(a.addedPunches ?? []);
   if (a.shift)
-    for (const p of [...a.punches].sort()) {
+    for (const p of [...a.punches, ...added].sort()) {
       const d = businessDate(p, a.shift);
       byDay.set(d, [...(byDay.get(d) ?? []), p]);
     }
@@ -96,6 +101,7 @@ export function computeMonth(a: {
     if (!employed) { row.status = "not_employed"; return row; }
     if (a.holidays?.has(date)) { row.status = "holiday"; return row; }
     if (a.leave?.has(date)) { row.status = "leave"; return row; }
+    if (a.unpaidLeave?.has(date) && scheduled) { row.status = "unpaid_leave"; row.deductionPaisa = absenceCut ?? 0; row.note = "Approved unpaid leave."; return row; }
     if (!scheduled) { if (ps.length) { row.status = "rest_day_work"; row.note = "Worked on a rest day: not overtime unless approved."; } return row; }
     if (!ps.length) {
       if (shiftEnd > a.now) { row.status = "upcoming"; return row; } // shift not finished yet
@@ -110,14 +116,18 @@ export function computeMonth(a: {
     }
     const lateSeconds = (Date.parse(`${ps[0]}Z`) - Date.parse(`${row.scheduledStart}Z`)) / 1000;
     row.lateMinutes = Math.max(0, Math.ceil(lateSeconds / 60)); // 10 min 1 s shows as 11 min: never looks like it contradicts the 10-minute rule
-    if (lateSeconds > a.policy.graceMinutes * 60) { row.status = "late"; row.deductionPaisa = lateCut ?? 0; }
-    else row.status = "present";
+    if (ps.some((p) => added.has(p))) row.note = "Includes a time added by an approved request.";
+    if (lateSeconds > a.policy.graceMinutes * 60) {
+      if (a.excusedLate?.has(date)) { row.status = "excused"; row.note = `Late by ${row.lateMinutes} min, excused by an Admin.`; }
+      else { row.status = "late"; row.deductionPaisa = lateCut ?? 0; }
+    } else row.status = "present";
     return row;
   });
 
   const count = (s: DayStatus) => rows.filter((r) => r.status === s).length;
   const lateDeduction = rows.filter((r) => r.status === "late").reduce((t, r) => t + r.deductionPaisa, 0);
   const absenceDeduction = rows.filter((r) => r.status === "absent").reduce((t, r) => t + r.deductionPaisa, 0);
+  const unpaidLeaveDeduction = rows.filter((r) => r.status === "unpaid_leave").reduce((t, r) => t + r.deductionPaisa, 0);
   // Gross for THIS month: full salary, or a day's salary x working days employed
   // for someone who joined or left mid-month. One source for every screen.
   const prorationDays = a.shift ? a.workdays : [1, 2, 3, 4, 5];
@@ -126,12 +136,14 @@ export function computeMonth(a: {
     && (!a.employedFrom || d >= a.employedFrom) && (!a.employedTo || d <= a.employedTo)).length;
   const prorated = employedDays < fullMonthDays;
   const gross = a.monthlyPaisa === null ? null : prorated ? (daily ?? 0) * employedDays : a.monthlyPaisa;
-  const total = gross === null ? lateDeduction + absenceDeduction : Math.min(gross, lateDeduction + absenceDeduction);
+  const allCuts = lateDeduction + absenceDeduction + unpaidLeaveDeduction;
+  const total = gross === null ? allCuts : Math.min(gross, allCuts);
   return {
     days: rows,
     totals: {
       scheduled: rows.filter((r) => r.scheduled).length, present: count("present"), late: count("late"), absent: count("absent"),
       incomplete: count("incomplete"), leave: count("leave"), holiday: count("holiday"), restDayWork: count("rest_day_work"),
+      excused: count("excused"), unpaidLeave: count("unpaid_leave"), unpaidLeaveDeductionPaisa: unpaidLeaveDeduction,
       lateMinutes: rows.filter((r) => r.status === "late").reduce((t, r) => t + r.lateMinutes, 0),
       workedMinutes: rows.reduce((t, r) => t + (r.workedMinutes ?? 0), 0),
       dailyRatePaisa: daily, latePenaltyPaisa: lateCut,

@@ -5,12 +5,12 @@ const TONE: Record<string, "ok" | "warn" | "bad" | "neutral" | "accent" | "revie
   uploaded: "accent", parsing: "accent", requested: "accent", under_review: "warn", pending: "warn",
   open: "warn", missing: "bad", rejected: "bad", parse_failed: "bad", expired: "bad",
   terminated: "neutral", resigned: "neutral", not_applicable: "neutral", proposed: "warn",
-  present: "ok", late: "warn", absent: "bad", incomplete: "review", rest: "neutral", rest_day_work: "info", upcoming: "neutral", leave: "info", holiday: "info", not_employed: "neutral", draft: "accent", locked: "ok", superseded: "neutral",
+  present: "ok", late: "warn", absent: "bad", incomplete: "review", rest: "neutral", rest_day_work: "info", upcoming: "neutral", leave: "info", holiday: "info", not_employed: "neutral", excused: "info", unpaid_leave: "warn", draft: "accent", locked: "ok", superseded: "neutral",
 };
 const LABEL: Record<string, string> = {
   under_review: "In review", accepted_as_is: "Accepted as is", parse_failed: "Could not read",
   not_applicable: "Not applicable", uploaded: "Uploaded", parsing: "Reading file",
-  present: "On time", incomplete: "Needs review", rest: "Rest day", rest_day_work: "Rest-day work", upcoming: "Not yet", not_employed: "Not employed",
+  present: "On time", incomplete: "Needs review", rest: "Rest day", rest_day_work: "Rest-day work", upcoming: "Not yet", not_employed: "Not employed", excused: "Late, excused", unpaid_leave: "Unpaid leave",
 };
 
 export function StatusChip({ status, className }: { status: string; className?: string }) {
