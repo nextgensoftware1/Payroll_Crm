@@ -11,7 +11,7 @@ src/server/         the backend: plain TypeScript, no Next.js imports except ses
   jobs/               background work: attendance import, probation/contract alerts
   zkteco/             device export parser (CSV, TSV, HTML-as-xls, legacy BIFF .xls)
   session.ts          the only bridge to Next.js + Supabase Auth
-supabase/migrations/  10 SQL migrations (schema, RLS, insert-only grants)
+supabase/migrations/  16 SQL migrations (schema, RLS, insert-only grants)
 db/                   SQL acceptance tests, setup scripts, local Supabase shim
 tests/                node:test suites (no test framework dependency)
 scripts/migrate.ts    migration runner (same tracking table as the Supabase CLI)
@@ -52,13 +52,14 @@ retry. Pro allows the 5-minute schedule.
 
 1. **Create a Supabase project.**
    - Authentication > Providers: turn on email, turn off public sign-ups.
-   - Authentication > Multi-Factor: enable TOTP.
    - Settings > API > Exposed schemas: make sure `hr` is **not** listed.
+   - Sign-in uses email and password; the app does not enroll or prompt for TOTP.
 2. **Apply the migrations**, either way:
    - `MIGRATION_DATABASE_URL=<owner direct URL, port 5432> npm run db:migrate`, or
-   - `supabase link --project-ref <ref> && supabase db push`.
+   - `supabase link --project-ref <ref> && supabase db push`, or
+   - For a new project, open `db/export_supabase.sql` in the Supabase SQL Editor and run it once as the database owner. Regenerate it after migration changes with `npm run db:export`.
 
-   Both use the same tracking table.
+   The SQL export is a one-time schema setup, not a data transfer. Do not run it on a database where migrations have already been applied. It excludes login roles, initial Admin users, and development seed data; complete the following setup steps separately. The migration runner and Supabase CLI use the same tracking table.
 3. **Create the login roles** (passwords are generated at run time and never committed):
    ```bash
    psql "$MIGRATION_DATABASE_URL" -v api_pw="$(openssl rand -base64 24)" \

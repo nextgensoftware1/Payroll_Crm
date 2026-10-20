@@ -31,13 +31,13 @@ export async function setupClean() {
   Object.assign(process.env, {
     NODE_ENV: "test", DATABASE_URL: withDb(db, "hr_api_login", "test"), WORKER_DATABASE_URL: withDb(db, "hr_worker_login", "test"),
     DB_USES_TRANSACTION_POOLER: "false", NEXT_PUBLIC_SUPABASE_URL: "http://supabase.test", NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "test-publishable-key",
-    STORAGE_BACKEND: "local", LOCAL_STORAGE_DIR: mkdtempSync(path.join(tmpdir(), "hr-mock-")), REQUIRE_MFA_FOR_STAFF: "true",
+    STORAGE_BACKEND: "local", LOCAL_STORAGE_DIR: mkdtempSync(path.join(tmpdir(), "hr-mock-")),
   });
   const { resetConfigForTests } = await import("../../src/server/config.ts"); resetConfigForTests();
   const { runAs } = await import("../../src/server/context.ts");
   const { LocalStorage } = await import("../../src/server/storage.ts");
   const storage = new LocalStorage(process.env.LOCAL_STORAGE_DIR!);
-  const as = <T>(who: "admin" | "hr", fn: Parameters<typeof runAs<T>>[1]) => runAs<T>({ userId: U[who], email: `${who}@empire.test`, aal: "aal2" }, fn);
+  const as = <T>(who: "admin" | "hr", fn: Parameters<typeof runAs<T>>[1]) => runAs<T>({ userId: U[who], email: `${who}@empire.test`, aal: "aal1" }, fn);
   const teardown = async (drop = true) => {
     const { closeDb } = await import("../../src/server/db.ts"); await closeDb(); await owner.end();
     if (drop) { const a = postgres(SUPER, { max: 1, onnotice: () => {} }); await a.unsafe(`drop database "${db}" with (force)`); await a.end(); }

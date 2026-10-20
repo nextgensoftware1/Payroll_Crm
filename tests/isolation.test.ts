@@ -12,9 +12,9 @@ let h: Awaited<ReturnType<typeof setup>>;
 before(async () => { h = await setup(); });
 after(async () => { await h.teardown(); });
 
-test("staff need MFA; employees do not", async () => {
-  const e = await rejects(h.as("hr", (c) => listEmployees(c, {}), "aal1"), 403);
-  assert.equal(e.code, "mfa_required");
+test("staff access works with a normal aal1 session", async () => {
+  const staff = await h.as("hr", (c) => listEmployees(c, {}), "aal1");
+  assert.ok(staff.total >= 3);
   const m = await h.as("e1", (c) => me(c), "aal1");
   assert.deepEqual(m.roles, ["employee"]);
   assert.equal(m.employeeId, EMP.e1);

@@ -108,7 +108,7 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
                       <select id="login_role" name="role" className="field" defaultValue="employee">
                         <option value="employee">Employee: own records and payslips only</option>
                         <option value="manager">Manager: also their team&apos;s attendance</option>
-                        <option value="hr">HR: everything except Admin actions (needs authenticator app)</option>
+                        <option value="hr">HR: everything except Admin actions</option>
                       </select></div>
                   </ActionForm>
                   <details className="text-[13.5px]">

@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --conditions=react-server --test --test-concurrency=1 tests/*.test.ts",
     "db:migrate": "node scripts/migrate.ts",
+    "db:export": "node scripts/export-supabase-sql.ts",
     "test:pooler": "TEST_POOLER_MODE=true npm test",
     "test:sql": "psql -v ON_ERROR_STOP=1 -f db/tests/test_schema_security.sql"
   },

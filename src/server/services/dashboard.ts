@@ -63,5 +63,5 @@ export async function me(ctx: Ctx) {
     ? await ctx.tx<{ full_name: string }[]>`select full_name from hr.employee where id = ${ctx.employeeId}`
     : [];
   return { userId: ctx.principal.userId, email: ctx.principal.email, roles: [...ctx.roles].sort(),
-           employeeId: ctx.employeeId, employeeName: row?.full_name ?? null, mfaVerified: ctx.principal.aal === "aal2" };
+           employeeId: ctx.employeeId, employeeName: row?.full_name ?? null };
 }

@@ -84,7 +84,6 @@ export async function setup() {
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "test-publishable-key",
     STORAGE_BACKEND: "local",
     LOCAL_STORAGE_DIR: mkdtempSync(path.join(tmpdir(), "hr-storage-")),
-    REQUIRE_MFA_FOR_STAFF: "true",
   });
   const { resetConfigForTests } = await import("../src/server/config.ts");
   resetConfigForTests();
@@ -92,8 +91,8 @@ export async function setup() {
   const { LocalStorage } = await import("../src/server/storage.ts");
   const storage = new LocalStorage(process.env.LOCAL_STORAGE_DIR!);
 
-  /** Run a service as a person. Staff default to MFA-verified (aal2). */
-  const as = <T>(who: Who, fn: Parameters<typeof runAs<T>>[1], aal = "aal2") =>
+  /** Run a service as a person, starting from a normal password-authenticated session. */
+  const as = <T>(who: Who, fn: Parameters<typeof runAs<T>>[1], aal = "aal1") =>
     runAs<T>({ userId: U[who], email: `${who}@empire.test`, aal }, fn);
 
   const teardown = async () => {
@@ -104,7 +103,7 @@ export async function setup() {
     await a.unsafe(`drop database "${db}" with (force)`);
     await a.end();
   };
-  const runAsStranger = () => runAs({ userId: randomUUID(), email: null, aal: "aal2" }, async () => null);
+  const runAsStranger = () => runAs({ userId: randomUUID(), email: null, aal: "aal1" }, async () => null);
   return { as, storage, owner, teardown, runAsStranger, runAs };
 }
 

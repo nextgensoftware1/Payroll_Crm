@@ -28,7 +28,7 @@ export async function userStorage(): Promise<Storage> {
 }
 
 /** For pages: run fn as the signed-in person in one RLS transaction.
- *  404s render the not-found page; missing MFA goes to /mfa. */
+ *  404s render the not-found page. */
 export async function withSession<T>(fn: (ctx: Ctx) => Promise<T>, opts?: { roles?: Role[] }): Promise<T> {
   const principal = await getPrincipal();
   if (principal.mustChangePassword) redirect("/auth/change-password");
@@ -37,7 +37,6 @@ export async function withSession<T>(fn: (ctx: Ctx) => Promise<T>, opts?: { role
   } catch (e) {
     unstable_rethrow(e);
     const err = toAppError(e);
-    if (err.code === "mfa_required") redirect("/mfa");
     if (err.status === 404) notFound();
     if (err.status >= 500) console.error("[empire-hr] page failed:", err.cause ?? e);
     throw err;
@@ -54,7 +53,6 @@ export async function act(fn: (ctx: Ctx) => Promise<unknown>, success?: string):
   } catch (e) {
     unstable_rethrow(e);
     const err = toAppError(e);
-    if (err.code === "mfa_required") redirect("/mfa");
     if (err.status >= 500) console.error("[empire-hr] action failed:", err.cause ?? e);
     return { error: err.message, code: err.code, extra: err.extra };
   }

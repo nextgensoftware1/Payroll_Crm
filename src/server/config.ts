@@ -17,7 +17,6 @@ const Schema = z.object({
   CRON_SECRET: z.string().min(32).optional(),
   STORAGE_BACKEND: z.enum(["supabase", "local"]).default("supabase"),
   LOCAL_STORAGE_DIR: z.string().default("./.storage"),
-  REQUIRE_MFA_FOR_STAFF: bool(true),
   MAX_UPLOAD_BYTES: z.coerce.number().int().default(20 * 1024 * 1024),
   SIGNED_URL_TTL_SECONDS: z.coerce.number().int().default(60),
 });
@@ -34,7 +33,6 @@ export function config(): Config {
   const c = parsed.data;
   if (c.NODE_ENV === "production" && process.env.NEXT_PHASE !== "phase-production-build") {
     if (c.STORAGE_BACKEND !== "supabase") throw new Error("production must use Supabase storage");
-    if (!c.REQUIRE_MFA_FOR_STAFF) throw new Error("production requires MFA for HR/Admin");
   }
   cached = c;
   return c;

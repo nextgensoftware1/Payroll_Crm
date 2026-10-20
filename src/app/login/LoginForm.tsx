@@ -26,7 +26,6 @@ export function LoginForm({ next }: { next?: string }) {
       </div>
       <FormMessage state={state} />
       <div className="[&>button]:w-full"><SubmitButton pendingText="Signing in…">Sign in</SubmitButton></div>
-      <p className="text-center text-[12.5px] text-ink-3">HR and Admin accounts confirm with an authenticator app next.</p>
     </form>
   );
 }

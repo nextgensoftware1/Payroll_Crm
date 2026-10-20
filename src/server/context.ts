@@ -1,6 +1,5 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { config } from "./config.ts";
 import { type Claims, type Tx, withRls } from "./db.ts";
 import { AppError } from "./errors.ts";
 
@@ -33,8 +32,6 @@ export async function runAs<T>(principal: Principal, fn: (ctx: Ctx) => Promise<T
     const roles = new Set(row!.roles);
     if (!roles.size) throw new AppError(403, "no_access", "Your account has no role yet. Ask an Admin to grant access.");
     const isStaff = roles.has("admin") || roles.has("hr");
-    if (config().REQUIRE_MFA_FOR_STAFF && isStaff && principal.aal !== "aal2")
-      throw new AppError(403, "mfa_required", "HR and Admin accounts must verify with an authenticator app.");
     if (opts.roles && !opts.roles.some((r) => roles.has(r)))
       throw new AppError(403, "not_permitted", "Your role does not allow this action.");
     return fn({ tx, principal, roles, employeeId: row!.employee_id, isStaff, isAdmin: roles.has("admin"), requestId });
