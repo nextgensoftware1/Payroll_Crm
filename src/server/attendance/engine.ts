@@ -79,7 +79,9 @@ export function computeMonth(a: {
   if (a.shift)
     for (const p of [...a.punches, ...added].sort()) {
       const d = businessDate(p, a.shift);
-      byDay.set(d, [...(byDay.get(d) ?? []), p]);
+      const dayPunches = byDay.get(d);
+      if (dayPunches) dayPunches.push(p);
+      else byDay.set(d, [p]);
     }
   const daily = a.monthlyPaisa !== null ? dailyRate(a.monthlyPaisa, a.policy) : null;
   const lateCut = daily !== null ? latePenalty(daily, a.policy) : null;
@@ -124,10 +126,24 @@ export function computeMonth(a: {
     return row;
   });
 
-  const count = (s: DayStatus) => rows.filter((r) => r.status === s).length;
-  const lateDeduction = rows.filter((r) => r.status === "late").reduce((t, r) => t + r.deductionPaisa, 0);
-  const absenceDeduction = rows.filter((r) => r.status === "absent").reduce((t, r) => t + r.deductionPaisa, 0);
-  const unpaidLeaveDeduction = rows.filter((r) => r.status === "unpaid_leave").reduce((t, r) => t + r.deductionPaisa, 0);
+  const counts = new Map<DayStatus, number>();
+  let scheduledDays = 0;
+  let lateMinutes = 0;
+  let workedMinutes = 0;
+  let lateDeduction = 0;
+  let absenceDeduction = 0;
+  let unpaidLeaveDeduction = 0;
+  for (const row of rows) {
+    counts.set(row.status, (counts.get(row.status) ?? 0) + 1);
+    if (row.scheduled) scheduledDays++;
+    workedMinutes += row.workedMinutes ?? 0;
+    if (row.status === "late") {
+      lateMinutes += row.lateMinutes;
+      lateDeduction += row.deductionPaisa;
+    } else if (row.status === "absent") absenceDeduction += row.deductionPaisa;
+    else if (row.status === "unpaid_leave") unpaidLeaveDeduction += row.deductionPaisa;
+  }
+  const count = (s: DayStatus) => counts.get(s) ?? 0;
   // Gross for THIS month: full salary, or a day's salary x working days employed
   // for someone who joined or left mid-month. One source for every screen.
   const prorationDays = a.shift ? a.workdays : [1, 2, 3, 4, 5];
@@ -141,11 +157,10 @@ export function computeMonth(a: {
   return {
     days: rows,
     totals: {
-      scheduled: rows.filter((r) => r.scheduled).length, present: count("present"), late: count("late"), absent: count("absent"),
+      scheduled: scheduledDays, present: count("present"), late: count("late"), absent: count("absent"),
       incomplete: count("incomplete"), leave: count("leave"), holiday: count("holiday"), restDayWork: count("rest_day_work"),
       excused: count("excused"), unpaidLeave: count("unpaid_leave"), unpaidLeaveDeductionPaisa: unpaidLeaveDeduction,
-      lateMinutes: rows.filter((r) => r.status === "late").reduce((t, r) => t + r.lateMinutes, 0),
-      workedMinutes: rows.reduce((t, r) => t + (r.workedMinutes ?? 0), 0),
+      lateMinutes, workedMinutes,
       dailyRatePaisa: daily, latePenaltyPaisa: lateCut,
       lateDeductionPaisa: lateDeduction, absenceDeductionPaisa: absenceDeduction, totalDeductionPaisa: total,
       monthlyPaisa: a.monthlyPaisa, grossPaisa: gross, netPaisa: gross === null ? null : gross - total,

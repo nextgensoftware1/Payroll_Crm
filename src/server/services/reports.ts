@@ -23,8 +23,10 @@ const DEFAULTS: Policy = { graceMinutes: 10, latePercentOfDay: 4, workingDaysDiv
 export async function loadPolicy(ctx: Ctx, on: string): Promise<PolicyInfo> {
   const out = { ...DEFAULTS } as Policy;
   const pending: string[] = [];
-  for (const [k, key] of Object.entries(KEYS) as [keyof Policy, string][]) {
-    const v = await configValue(ctx.tx, key, on);
+  const entries = Object.entries(KEYS) as [keyof Policy, string][];
+  const values = await Promise.all(entries.map(([, key]) => configValue(ctx.tx, key, on)));
+  for (const [i, [k, key]] of entries.entries()) {
+    const v = values[i];
     if (v) out[k] = Number(v.value);
     if (!v || v.status !== "approved") pending.push(key);
   }
@@ -89,10 +91,10 @@ async function buildReport(ctx: Ctx, f: Filters, self: boolean) {
 
   const ids = people.map((p) => p.employee_id);
   // punches: generous window (previous evening to the morning after), engine assigns exact business dates
-  const punches = self
-    ? (await ctx.tx<{ ts: string }[]>`select ts from hr.my_punches(${start}::timestamp - interval '1 day', ${end}::timestamp + interval '2 days')`)
-        .map((r) => ({ employee_id: ctx.employeeId!, ts: r.ts }))
-    : await ctx.tx<{ employee_id: string; ts: string }[]>`
+  const punches: Promise<{ employee_id: string; ts: string }[]> = self
+    ? ctx.tx<{ ts: string }[]>`select ts from hr.my_punches(${start}::timestamp - interval '1 day', ${end}::timestamp + interval '2 days')`
+        .then((rows) => rows.map((r) => ({ employee_id: ctx.employeeId!, ts: r.ts })))
+    : ctx.tx<{ employee_id: string; ts: string }[]>`
     select pm.employee_id, p.device_local_ts as ts
     from hr.raw_punch p
     join hr.punch_mapping pm on pm.device_id = p.device_id and pm.enrollment_no = p.enrollment_no
@@ -102,20 +104,64 @@ async function buildReport(ctx: Ctx, f: Filters, self: boolean) {
       and not exists (select 1 from hr.attendance_correction c where c.target_raw_punch_id = p.id
                       and c.kind = 'disregard_punch' and hr.is_approved(c.approval_request_id))
     order by p.device_local_ts`;
-  const leave = await ctx.tx<{ employee_id: string; d: string; paid: boolean }[]>`
+  const leavePromise: Promise<{ employee_id: string; d: string; paid: boolean }[]> = ctx.tx`
     select lr.employee_id, gs::date::text as d, lt.is_paid as paid from hr.leave_request lr
     join hr.leave_type lt on lt.id = lr.leave_type_id
     cross join generate_series(greatest(lr.start_date, ${start}::date), least(lr.end_date, ${end}::date), interval '1 day') gs
     where lr.employee_id = any(${ids}::uuid[]) and hr.is_approved(lr.approval_request_id)`;
-  const excuses = await ctx.tx<{ employee_id: string; d: string; kind: string; added: string | null }[]>`
+  const excusesPromise: Promise<{ employee_id: string; d: string; kind: string; added: string | null }[]> = ctx.tx`
     select employee_id, business_date::text as d, kind, added_punch_local as added from hr.attendance_excuse
     where employee_id = any(${ids}::uuid[]) and business_date between ${start}::date - 1 and ${end}::date and hr.is_approved(approval_request_id)`;
-  const holidays = await ctx.tx<{ d: string; employee_id: string | null }[]>`
+  const holidaysPromise: Promise<{ d: string; employee_id: string | null }[]> = ctx.tx`
     select h.holiday_date::text as d, he.employee_id from hr.holiday h left join hr.holiday_employee he on he.holiday_id = h.id
     where h.status = 'approved' and h.holiday_date between ${start}::date and ${end}::date`;
+  const [punchRows, leave, excuses, holidays] = await Promise.all([
+    punches,
+    leavePromise,
+    excusesPromise,
+    holidaysPromise,
+  ]);
 
   const byEmp = new Map<string, string[]>();
-  for (const p of punches) byEmp.set(p.employee_id, [...(byEmp.get(p.employee_id) ?? []), p.ts]);
+  for (const p of punchRows) {
+    const employeePunches = byEmp.get(p.employee_id);
+    if (employeePunches) employeePunches.push(p.ts);
+    else byEmp.set(p.employee_id, [p.ts]);
+  }
+
+  const paidLeaveByEmployee = new Map<string, Set<string>>();
+  const unpaidLeaveByEmployee = new Map<string, Set<string>>();
+  for (const row of leave) {
+    const byEmployee = row.paid ? paidLeaveByEmployee : unpaidLeaveByEmployee;
+    let dates = byEmployee.get(row.employee_id);
+    if (!dates) byEmployee.set(row.employee_id, dates = new Set());
+    dates.add(row.d);
+  }
+
+  const excusedLateByEmployee = new Map<string, Set<string>>();
+  const addedPunchesByEmployee = new Map<string, string[]>();
+  for (const row of excuses) {
+    if (row.kind === "late") {
+      let dates = excusedLateByEmployee.get(row.employee_id);
+      if (!dates) excusedLateByEmployee.set(row.employee_id, dates = new Set());
+      dates.add(row.d);
+    }
+    if (row.kind === "missing_punch" && row.added) {
+      let punches = addedPunchesByEmployee.get(row.employee_id);
+      if (!punches) addedPunchesByEmployee.set(row.employee_id, punches = []);
+      punches.push(row.added);
+    }
+  }
+
+  const globalHolidays = new Set(holidays.filter((h) => !h.employee_id).map((h) => h.d));
+  const holidaysByEmployee = new Map<string, Set<string>>();
+  for (const row of holidays) {
+    if (!row.employee_id) continue;
+    let dates = holidaysByEmployee.get(row.employee_id);
+    if (!dates) holidaysByEmployee.set(row.employee_id, dates = new Set());
+    dates.add(row.d);
+  }
+
   const now = nowKarachi();
   return {
     policy, month: f.month,
@@ -131,11 +177,11 @@ async function buildReport(ctx: Ctx, f: Filters, self: boolean) {
         result: computeMonth({
           month: f.month, now, shift, workdays: p.workdays ?? [], punches: byEmp.get(p.employee_id) ?? [], monthlyPaisa: salary, policy,
           employedFrom: p.joining_date, employedTo: p.exit_date,
-          leave: new Set(leave.filter((l) => l.employee_id === p.employee_id && l.paid).map((l) => l.d)),
-          unpaidLeave: new Set(leave.filter((l) => l.employee_id === p.employee_id && !l.paid).map((l) => l.d)),
-          excusedLate: new Set(excuses.filter((x) => x.employee_id === p.employee_id && x.kind === "late").map((x) => x.d)),
-          addedPunches: excuses.filter((x) => x.employee_id === p.employee_id && x.kind === "missing_punch" && x.added).map((x) => x.added!),
-          holidays: new Set(holidays.filter((h) => !h.employee_id || h.employee_id === p.employee_id).map((h) => h.d)),
+          leave: paidLeaveByEmployee.get(p.employee_id),
+          unpaidLeave: unpaidLeaveByEmployee.get(p.employee_id),
+          excusedLate: excusedLateByEmployee.get(p.employee_id),
+          addedPunches: addedPunchesByEmployee.get(p.employee_id),
+          holidays: new Set([...globalHolidays, ...(holidaysByEmployee.get(p.employee_id) ?? [])]),
         }),
       };
     }),

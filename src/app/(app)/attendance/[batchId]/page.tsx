@@ -40,9 +40,12 @@ function summarize(f: Flag): string {
 }
 
 export default async function BatchPage({ params, searchParams }:
-  { params: Promise<{ batchId: string }>; searchParams: Promise<{ person?: string; dup?: string }> }) {
+  { params: Promise<{ batchId: string }>; searchParams: Promise<{
+    person?: string; dup?: string; salaryApproved?: string; salaryProposed?: string;
+    salaryUnchanged?: string; salarySkipped?: string; salaryConflicts?: string;
+  }> }) {
   const { batchId } = await params;
-  const { person, dup } = await searchParams;
+  const { person, dup, salaryApproved, salaryProposed, salaryUnchanged, salarySkipped, salaryConflicts } = await searchParams;
   const { b, flags, punches, employees, selected, auto } = await withSession(async (c) => {
     const b = await getBatch(c, batchId);
     const selected = person ?? b.people[0]?.enrollment_no;
@@ -71,6 +74,16 @@ export default async function BatchPage({ params, searchParams }:
           <Link href="/attendance" className="btn-quiet">All imports</Link></>} />
 
       {dup ? <p role="status" className="mb-4 rounded-md bg-warn-soft px-3 py-2 text-sm text-warn">That exact file was already uploaded. This is the existing import.</p> : null}
+      {salaryApproved !== undefined || salaryProposed !== undefined ? (
+        <div role="status" className="mb-4 rounded-md bg-ok-soft px-3 py-2 text-sm text-ok">
+          CSV salary sync: {salaryApproved ?? "0"} salary changes applied
+          {Number(salaryProposed) > 0 ? `, ${salaryProposed} awaiting Admin approval` : ""}
+          {Number(salaryUnchanged) > 0 ? `, ${salaryUnchanged} already matched` : ""}
+          {Number(salarySkipped) > 0 ? `, ${salarySkipped} skipped (missing or invalid CSV salary, or no employee link)` : ""}
+          {Number(salaryConflicts) > 0 ? `, ${salaryConflicts} skipped because another salary change is already pending` : ""}.{" "}
+          <Link className="font-semibold underline" href={`/dashboard?month=${(b.people[0]?.last_at ?? "").slice(0, 7)}`}>View dashboard</Link>
+        </div>
+      ) : null}
       {b.status === "uploaded" || b.status === "parsing" || (auto && b.status === "under_review") || (b.status === "accepted" && b.promoted_punches === null)
         ? <div className="mb-6"><AutoRefresh /></div> : null}
       {auto && b.status === "accepted" && b.promoted_punches !== null ? (
@@ -97,7 +110,7 @@ export default async function BatchPage({ params, searchParams }:
         <p className="mb-6 text-[13.5px] text-ink-3">Read as {b.detected_source.replace("_", " ").toUpperCase()} ({b.declared_extension} file), encoding {b.detected_encoding}.</p>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-[1.25fr_1fr]">
+      <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
         <section className="panel">
           <h2 className="border-b border-line px-4 py-3 font-semibold">{sel ? `${sel.name_seen ?? "No name"}, enrollment ${sel.enrollment_no}` : "Punches"}</h2>
           <div className="p-4">

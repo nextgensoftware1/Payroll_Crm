@@ -20,12 +20,12 @@ test("set up all 15 people from the import with suggested shifts", async () => {
   const cand = await h.as("hr", (c) => setupCandidates(c, batch));
   assert.equal(cand.people.length, 15);
   const moon = cand.people.find((p) => p.enrollment_no === "1")!;
-  assert.deepEqual([moon.name_seen, moon.suggested_hour, moon.demo_salary], ["Moon", 17, 52000]);
+  assert.deepEqual([moon.name_seen, moon.suggested_hour, moon.suggested_salary, moon.salary_source], ["Moon", 17, 52000, "sample"]);
   assert.equal(cand.people.find((p) => p.enrollment_no === "42")!.suggested_hour, null); // Huzaifa: 1 day only
   const done = await h.as("hr", (c) => setupFromBatch(c, batch, {
     joining_date: "2026-08-01", department_id: null,
     rows: cand.people.map((p) => ({ enrollment_no: p.enrollment_no, include: true, employee_code: `EM-${p.enrollment_no.padStart(4, "0")}`,
-      full_name: p.name_seen ?? `No. ${p.enrollment_no}`, shift_hour: p.suggested_hour, salary_pkr: p.demo_salary })),
+      full_name: p.name_seen ?? `No. ${p.enrollment_no}`, shift_hour: p.suggested_hour, salary_pkr: p.suggested_salary })),
   }));
   assert.deepEqual(done, { employees: 15, salaries: 15, mappings: 15, skipped: 0 });
 });

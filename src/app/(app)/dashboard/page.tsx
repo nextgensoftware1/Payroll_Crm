@@ -27,8 +27,14 @@ function Delta({ now, before, goodWhenUp, prevMonth }: { now: number; before: nu
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ month?: string; day?: string }> }) {
   const sp = await searchParams;
   const d = await withSession(async (c) => {
-    const month = sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : await latestPunchMonth(c);
-    return { o: await overview(c, month, sp.day), s: await summary(c), auto: await singleAdminMode(c), me: await getMe(c) };
+    const [month, s, auto, me] = await Promise.all([
+      sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? Promise.resolve(sp.month) : latestPunchMonth(c),
+      summary(c),
+      singleAdminMode(c),
+      getMe(c),
+    ]);
+    const o = await overview(c, month, sp.day);
+    return { o, s, auto, me };
   }, { roles: ["admin", "hr"] });
   if (d.auto && d.s.batches_under_review > 0) processImportsInBackground();
   const { o } = d; const k = o.kpi; const pv = k.prev ?? undefined;
@@ -77,7 +83,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
             </div>))}
         </section>
 
-        <div className="grid gap-5 xl:grid-cols-[1.45fr_1fr]">
+        <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
           <ChartCard title="Attendance by working day"
             legend={<><Dot color="ok" label="On time" /><Dot color="warn" label="Late" /><Dot color="bad" label="Absent" /><Dot color="review" label="Needs review" /></>}
             table={<table className="table"><thead><tr><th>Day</th><th className="text-right">On time</th><th className="text-right">Late</th><th className="text-right">Absent</th><th className="text-right">Review</th></tr></thead>
@@ -91,7 +97,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           </ChartCard>
         </div>
 
-        <div className="grid gap-5 lg:grid-cols-2 xl:grid-cols-[1.2fr_1fr_0.95fr]">
+        <div className="grid min-w-0 gap-5 lg:grid-cols-2 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,0.95fr)]">
           <ChartCard title="Monthly financial trend"
             table={<table className="table"><thead><tr><th>Month</th><th className="text-right">Net pay</th><th className="text-right">Deductions</th></tr></thead>
               <tbody>{o.trend.map((t) => <tr key={t.month}><td>{t.month}</td><td className="text-right">{P(t.net)}</td><td className="text-right">{(t.deductions / 100).toFixed(2)}</td></tr>)}</tbody></table>}>

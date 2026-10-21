@@ -69,7 +69,7 @@ export default async function Payroll({ searchParams }: { searchParams: Promise<
         </Empty>
       ) : (
         <>
-        <div className="mb-4 grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+        <div className="mb-4 grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
           <ChartCard title="Employee payroll breakdown">
             <PayrollStack data={m.lines.filter((l) => l.gross_paisa > 0).map((l) => ({ name: l.full_name, net: l.net_paisa,
               lateCut: -(part(l, "late")?.amount_paisa ?? 0), absenceCut: -(part(l, "absence")?.amount_paisa ?? 0) }))} />

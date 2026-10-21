@@ -6,6 +6,7 @@ import { processImportsInBackground } from "@/server/kick";
 import { act, userStorage } from "@/server/session";
 import { createDevice as addDevice, decideBatch as decide, proposeMapping as propose,
          resolveFlags, uploadBatch as upload } from "@/server/services/attendance";
+import { syncBatchSalariesFromImport } from "@/server/services/setup";
 
 const field = (f: FormData, k: string) => String(f.get(k) ?? "");
 
@@ -25,7 +26,23 @@ export async function uploadBatch(_: ActionState, form: FormData): Promise<Actio
       newDevice: chosen === "new" ? { name: field(form, "new_device_name"), prefer: field(form, "prefer") === "day_first" ? "day_first" : "month_first" } : null,
       filename: file.name, data, claimedStart: field(form, "claimed_start"), claimedEnd: field(form, "claimed_end") });
   });
-  if (r?.code === "duplicate_file") redirect(`/attendance/${String(r.extra?.existingBatchId)}?dup=1`);
+  if (r?.code === "duplicate_file") {
+    const existingBatchId = String(r.extra?.existingBatchId ?? "");
+    if (!existingBatchId) return { error: "The matching import was found, but its batch could not be opened. Please contact an Admin." };
+    const salaryResult = { approved: 0, proposed: 0, unchanged: 0, skipped: 0, conflicts: [] as string[] };
+    const sync = await act(async (c) => { Object.assign(salaryResult, await syncBatchSalariesFromImport(c, existingBatchId)); });
+    if (sync?.error) return sync;
+    revalidatePath("/dashboard");
+    revalidatePath("/employees");
+    revalidatePath("/reports");
+    const params = new URLSearchParams({ dup: "1" });
+    params.set("salaryApproved", String(salaryResult.approved));
+    params.set("salaryProposed", String(salaryResult.proposed));
+    params.set("salaryUnchanged", String(salaryResult.unchanged));
+    params.set("salarySkipped", String(salaryResult.skipped));
+    params.set("salaryConflicts", String(salaryResult.conflicts.length));
+    redirect(`/attendance/${existingBatchId}?${params.toString()}`);
+  }
   if (r?.error) return r;
   processInBackground();
   revalidatePath("/attendance");

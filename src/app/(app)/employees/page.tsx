@@ -14,11 +14,13 @@ type SP = Promise<{ q?: string; status?: string; department_id?: string; page?: 
 export default async function Employees({ searchParams }: { searchParams: SP }) {
   const sp = await searchParams;
   const page = Math.max(1, Number(sp.page) || 1);
-  const { staff, ref, data } = await withSession(async (c) => ({
-    staff: c.isStaff,
-    ref: await reference(c),
-    data: await listEmployees(c, { q: sp.q, status: sp.status, departmentId: sp.department_id || null, page, pageSize: 50 }),
-  }));
+  const { staff, ref, data } = await withSession(async (c) => {
+    const [ref, data] = await Promise.all([
+      reference(c),
+      listEmployees(c, { q: sp.q, status: sp.status, departmentId: sp.department_id || null, page, pageSize: 50 }),
+    ]);
+    return { staff: c.isStaff, ref, data };
+  });
   const pages = Math.max(1, Math.ceil(data.total / data.pageSize));
   const qs = (p: number) => new URLSearchParams({ ...(sp as Record<string, string>), page: String(p) }).toString();
 

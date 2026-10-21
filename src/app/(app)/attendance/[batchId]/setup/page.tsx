@@ -15,7 +15,7 @@ export default async function SetupPage({ params }: { params: Promise<{ batchId:
   return (
     <>
       <PageHeader title="Set up people from this import"
-        lede="Creates an employee for each enrollment number, assigns a Monday-to-Friday shift, and proposes a monthly salary and the enrollment link. Salaries and links only count after a different Admin approves them."
+        lede="CSV salaries are shown as suggestions when the values are consistent. A different amount creates a salary-change proposal from the joining date; it never silently overwrites the saved salary."
         actions={<Link href={`/attendance/${batchId}`} className="btn-quiet">Back to import</Link>} />
       <ActionForm action={runSetup} submit="Create and send for approval" pending="Setting up…" className="space-y-4">
         <input type="hidden" name="batch_id" value={batchId} />
@@ -30,24 +30,31 @@ export default async function SetupPage({ params }: { params: Promise<{ batchId:
         </div>
         <div className="panel overflow-x-auto">
           <table className="table min-w-[900px]">
-            <thead><tr><th scope="col">Add</th><th scope="col">No.</th><th scope="col">Employee code</th><th scope="col">Full name</th>
+            <thead><tr><th scope="col">Set up</th><th scope="col">No.</th><th scope="col">Employee code</th><th scope="col">Full name</th>
               <th scope="col">Shift (Mon to Fri)</th><th scope="col">Monthly salary (PKR)</th><th scope="col">Status</th></tr></thead>
             <tbody>
               {cand.people.map((p) => {
                 const done = Boolean(p.mapping_status);
+                const salaryNeedsUpdate = p.suggested_salary !== null && p.suggested_salary !== p.current_salary_pkr && !p.has_pending_salary;
                 return (
                   <tr key={p.enrollment_no}>
                     <td><input type="hidden" name="enrollment_no" value={p.enrollment_no} />
-                      <input type="checkbox" name={`include_${p.enrollment_no}`} defaultChecked={!done} aria-label={`Add ${p.name_seen ?? p.enrollment_no}`} /></td>
+                      <input type="checkbox" name={`include_${p.enrollment_no}`}
+                        defaultChecked={!done || salaryNeedsUpdate}
+                        aria-label={`Set up ${p.name_seen ?? p.enrollment_no}`} /></td>
                     <td>{p.enrollment_no}<span className="block text-[12px] text-ink-3">{p.rows} punches</span></td>
-                    <td><input name={`code_${p.enrollment_no}`} className="field w-32 uppercase" defaultValue={`EN-${p.enrollment_no.padStart(4, "0")}`} aria-label="Employee code" /></td>
+                    <td><input name={`code_${p.enrollment_no}`} className="field w-32 uppercase" defaultValue={p.employee_code ?? `EN-${p.enrollment_no.padStart(4, "0")}`} aria-label="Employee code" /></td>
                     <td><input name={`name_${p.enrollment_no}`} className="field min-w-44" defaultValue={p.name_seen ?? ""} aria-label="Full name" /></td>
                     <td><select name={`shift_${p.enrollment_no}`} className="field" defaultValue={p.suggested_hour ?? ""} aria-label="Shift">
                       <option value="">Not set</option>
                       {SHIFT_HOURS.map((h) => <option key={h} value={h}>{shiftLabel(h)}{h === p.suggested_hour ? " (suggested)" : ""}</option>)}</select>
                       {p.suggested_hour === null ? <span className="block text-[12px] text-warn">Too few days to suggest</span> : null}</td>
-                    <td><input name={`salary_${p.enrollment_no}`} className="field w-32 text-right" inputMode="numeric" defaultValue={p.demo_salary ?? ""} aria-label="Monthly salary" />
-                      {p.demo_salary ? <span className="block text-[12px] text-ink-3">dummy value</span> : null}</td>
+                    <td><input name={`salary_${p.enrollment_no}`} className="field w-32 text-right" inputMode="numeric" defaultValue={p.suggested_salary ?? ""} aria-label="Monthly salary" />
+                      {p.salary_conflict ? <span className="block text-[12px] text-warn">Conflicting/invalid CSV values; review manually</span> : null}
+                      {p.salary_source === "CSV" ? <span className="block text-[12px] text-ink-3">From CSV; review before submitting</span> : null}
+                      {p.salary_source === "sample" ? <span className="block text-[12px] text-ink-3">Sample value</span> : null}
+                      {p.current_salary_pkr !== null ? <span className="block text-[12px] text-ink-3">Current: PKR {p.current_salary_pkr.toLocaleString("en-PK")}</span> : null}
+                      {p.has_pending_salary ? <span className="block text-[12px] text-warn">Salary change already awaiting approval</span> : null}</td>
                     <td className="text-[13px]">{done ? <>Linked to {p.existing_employee} ({p.mapping_status})</> : <span className="text-ink-3">New</span>}</td>
                   </tr>);
               })}

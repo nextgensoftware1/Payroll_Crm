@@ -20,13 +20,16 @@ async function markRead() {
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   let data;
   try {
-    data = await withSession(async (c) => ({
-      me: await me(c),
-      pending: (await listApprovals(c, { mine: true, limit: 200 })).length,
-      notes: await myNotifications(c),
-      months: c.isStaff ? await monthsWithPunches(c) : [],
-      latest: c.isStaff ? await latestPunchMonth(c) : "",
-    }));
+    data = await withSession(async (c) => {
+      const [person, approvals, notes, months, latest] = await Promise.all([
+        me(c),
+        listApprovals(c, { mine: true, limit: 200 }),
+        myNotifications(c),
+        c.isStaff ? monthsWithPunches(c) : Promise.resolve([]),
+        c.isStaff ? latestPunchMonth(c) : Promise.resolve(""),
+      ]);
+      return { me: person, pending: approvals.length, notes, months, latest };
+    });
   } catch (e) {
     unstable_rethrow(e);
     if (e instanceof AppError && e.code === "no_access")

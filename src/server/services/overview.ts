@@ -27,23 +27,33 @@ function totals(rep: Rep) {
 
 export async function overview(ctx: Ctx, month: string, day?: string | null) {
   requireRole(ctx, "admin", "hr");
-  const [rep, prev] = [await monthReport(ctx, { month }), await monthReport(ctx, { month: prevMonth(month) })];
+  const previousMonth = prevMonth(month);
+  const [rep, prev, availableMonths] = await Promise.all([
+    monthReport(ctx, { month }),
+    monthReport(ctx, { month: previousMonth }),
+    monthsWithPunches(ctx),
+  ]);
   const cur = totals(rep), before = prev.people.length ? totals(prev) : null;
 
   // 6-month trend from months that actually have data (never an invented percentage)
-  const months = (await monthsWithPunches(ctx)).filter((m) => m <= month).slice(0, 6).reverse();
-  const trend = [];
-  for (const m of months) {
-    const t = m === month ? cur : m === prevMonth(month) && before ? before : totals(await monthReport(ctx, { month: m }));
-    trend.push({ month: m, net: t.net, deductions: t.deductions, gross: t.gross, late: t.late, absent: t.absent, employees: t.employees });
-  }
+  const months = availableMonths.filter((m) => m <= month).slice(0, 6).reverse();
+  const trendReports: Rep[] = await Promise.all(months.map((m) =>
+    m === month ? Promise.resolve(rep)
+      : m === previousMonth ? Promise.resolve(prev)
+      : monthReport(ctx, { month: m }),
+  ));
+  const trend = months.map((m, i) => {
+    const t = totals(trendReports[i]!);
+    return { month: m, net: t.net, deductions: t.deductions, gross: t.gross, late: t.late, absent: t.absent, employees: t.employees };
+  });
 
   // per working day: how many people were on time / late / absent / needs review
   const holidays = new Set<string>();
+  const daysByPerson = rep.people.map((p) => new Map(p.result.days.map((d) => [d.date, d])));
   const byDay = monthDays(month).map((date) => {
     const c = { date, weekday: wd(date), onTime: 0, late: 0, absent: 0, review: 0, leave: 0, scheduled: 0, holiday: false };
-    for (const p of rep.people) {
-      const d = p.result.days.find((x) => x.date === date)!;
+    for (const personDays of daysByPerson) {
+      const d = personDays.get(date)!;
       if (d.status === "holiday") { c.holiday = true; holidays.add(date); }
       if (d.scheduled) c.scheduled++;
       if (d.status === "present") c.onTime++; else if (d.status === "late") c.late++; else if (d.status === "absent") c.absent++;
@@ -55,9 +65,9 @@ export async function overview(ctx: Ctx, month: string, day?: string | null) {
   const lastWithData = [...byDay].reverse().find((d) => d.onTime + d.late + d.review > 0)?.date ?? byDay[0]!.date;
   const focusDay = day && byDay.some((d) => d.date === day) ? day : lastWithData;
 
-  const people = rep.people.map((p) => {
+  const people = rep.people.map((p, i) => {
     const t = p.result.totals;
-    const d = p.result.days.find((x) => x.date === focusDay)!;
+    const d = daysByPerson[i]!.get(focusDay)!;
     return { id: p.employee_id, code: p.employee_code, name: p.full_name, department: p.department, shift: p.shift?.name ?? null,
       salary: p.salary_paisa, gross: t.grossPaisa, scheduled: t.scheduled, onTime: t.present, late: t.late, lateMinutes: t.lateMinutes,
       absent: t.absent, review: t.incomplete, deductions: p.salary_paisa === null ? null : t.totalDeductionPaisa, net: t.netPaisa,
@@ -65,8 +75,9 @@ export async function overview(ctx: Ctx, month: string, day?: string | null) {
       day: { status: d.status, in: d.firstIn, out: d.lastOut, lateMinutes: d.lateMinutes } };
   });
 
-  const pay = await payrollMonth(ctx, month);
-  const activity = await ctx.tx<{ at: string; kind: string; title: string; detail: string }[]>`
+  const [pay, activity] = await Promise.all([
+    payrollMonth(ctx, month),
+    ctx.tx<{ at: string; kind: string; title: string; detail: string }[]>`
     select * from (
       select b.reviewed_at as at, 'import' as kind, 'Attendance import completed' as title,
              b.promoted_punches || ' punches recorded' || case when b.duplicate_punches > 0 then ', ' || b.duplicate_punches || ' already in' else '' end as detail
@@ -79,7 +90,8 @@ export async function overview(ctx: Ctx, month: string, day?: string | null) {
       union all
       select pc.created_at, 'rule', 'Rule updated', replace(pc.key, '_', ' ') || ' = ' || pc.value::text
       from hr.policy_config pc where pc.source_reference like 'Changed in Settings%'
-    ) x where at is not null order by at desc limit 6`;
+    ) x where at is not null order by at desc limit 6`,
+  ]);
 
   return {
     month, focusDay, workingDays, policy: rep.policy,

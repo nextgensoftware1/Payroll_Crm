@@ -15,13 +15,20 @@ import { createDevice, uploadBatch } from "./actions";
 export const metadata: Metadata = { title: "Attendance imports" };
 
 export default async function Attendance() {
-  const { devices, batches, auto } = await withSession(async (c) => ({ devices: await listDevices(c), batches: await listBatches(c), auto: await singleAdminMode(c) }));
+  const { devices, batches, auto } = await withSession(async (c) => {
+    const [devices, batches, auto] = await Promise.all([
+      listDevices(c),
+      listBatches(c),
+      singleAdminMode(c),
+    ]);
+    return { devices, batches, auto };
+  });
   if (batches.some((b) => b.status === "uploaded" || (auto && b.status === "under_review") || (b.status === "accepted" && b.promoted_punches === null))) processImportsInBackground();
   return (
     <>
       <PageHeader title="Attendance imports"
         lede="Upload the export from the biometric device. Every row is kept exactly as exported; nothing reaches attendance until you review and accept the batch." />
-      <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+      <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <section aria-labelledby="batches-h">
           <h2 id="batches-h" className="sr-only">Imports</h2>
           {batches.length === 0 ? (

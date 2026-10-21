@@ -28,23 +28,23 @@ export function Register({ data }: { data: Overview }) {
   const days = data.byDay.filter((d) => d.weekday <= 5 || d.onTime + d.late > 0);
   return (
     <section className="panel overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
-        <h2 className="mr-auto text-[15px] font-semibold">Employee attendance register</h2>
+      <div className="flex min-w-0 flex-wrap items-center gap-2 border-b border-line px-4 py-3">
+        <h2 className="mr-auto min-w-0 text-[15px] font-semibold">Employee attendance register</h2>
         <div className="relative"><Search aria-hidden className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-ink-3" />
           <label className="sr-only" htmlFor="reg-q">Search by name or code</label>
           <input id="reg-q" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Search by name or code…" className="field w-56 py-1.5 pl-8" /></div>
         <label className="sr-only" htmlFor="reg-day">Status on day</label>
-        <select id="reg-day" className="field w-auto py-1.5" value={data.focusDay}
+        <select id="reg-day" className="field w-auto max-w-full py-1.5" value={data.focusDay}
           onChange={(e) => { const s = new URLSearchParams(sp.toString()); s.set("day", e.target.value); router.push(`?${s}`, { scroll: false }); }}>
           {days.map((d) => <option key={d.date} value={d.date}>{day(d.date)}{d.holiday ? " (holiday)" : ""}</option>)}</select>
         <label className="sr-only" htmlFor="reg-dept">Department</label>
-        <select id="reg-dept" className="field w-auto py-1.5" value={dept} onChange={(e) => { setDept(e.target.value); setPage(1); }}>
+        <select id="reg-dept" className="field w-auto max-w-full py-1.5" value={dept} onChange={(e) => { setDept(e.target.value); setPage(1); }}>
           <option value="">All departments</option>{depts.map((d) => <option key={d}>{d}</option>)}</select>
         <label className="sr-only" htmlFor="reg-shift">Shift</label>
-        <select id="reg-shift" className="field w-auto py-1.5" value={shift} onChange={(e) => { setShift(e.target.value); setPage(1); }}>
+        <select id="reg-shift" className="field w-auto max-w-full py-1.5" value={shift} onChange={(e) => { setShift(e.target.value); setPage(1); }}>
           <option value="">All shifts</option>{shifts.map((s) => <option key={s}>{s}</option>)}</select>
         <label className="sr-only" htmlFor="reg-sort">Sort</label>
-        <select id="reg-sort" className="field w-auto py-1.5" value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
+        <select id="reg-sort" className="field w-auto max-w-full py-1.5" value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
           <option value="code">Sort: code</option><option value="late">Most late</option><option value="absent">Most absent</option>
           <option value="deductions">Highest deductions</option><option value="net">Highest net</option></select>
       </div>
@@ -84,7 +84,7 @@ export function Register({ data }: { data: Overview }) {
         </table>
       </div>
       {pages > 1 ? (
-        <nav aria-label="Register pages" className="flex items-center justify-end gap-1 px-4 py-2.5 text-[13px]">
+        <nav aria-label="Register pages" className="flex flex-wrap items-center justify-end gap-1 px-4 py-2.5 text-[13px]">
           <span className="mr-2 text-ink-3">Showing {(page - 1) * per + 1} to {Math.min(page * per, rows.length)} of {rows.length}</span>
           {Array.from({ length: pages }, (_, i) => i + 1).map((n) => (
             <button key={n} type="button" onClick={() => setPage(n)} aria-current={n === page ? "page" : undefined}

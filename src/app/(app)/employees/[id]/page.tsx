@@ -40,7 +40,7 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
   return (
     <>
       <PageHeader title={e.full_name} lede={<span className="flex items-center gap-2">{e.employee_code} <StatusChip status={e.status} /></span>} />
-      <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
+      <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <div className="space-y-6">
           <section className="panel">
             <h2 className="border-b border-line px-4 py-3 font-semibold">Details</h2>

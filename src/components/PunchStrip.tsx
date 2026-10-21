@@ -64,12 +64,14 @@ export function PunchStrip({ punches }: { punches: Punch[] }) {
       </figcaption>
       <details className="mt-3 text-[13.5px]">
         <summary className="cursor-pointer text-accent">Show as a list</summary>
-        <table className="table mt-2">
-          <thead><tr><th scope="col">Row</th><th scope="col">Device time</th><th scope="col">Label</th><th scope="col">Flags</th></tr></thead>
-          <tbody>{punches.map((p) => (
-            <tr key={p.row_number}><td>{p.row_number}</td><td>{p.local_ts.replace("T", " ")}</td><td>{p.status_label}</td><td>{p.flags.join(", ") || "—"}</td></tr>
-          ))}</tbody>
-        </table>
+        <div className="mt-2 max-w-full overflow-x-auto">
+          <table className="table min-w-[560px]">
+            <thead><tr><th scope="col">Row</th><th scope="col">Device time</th><th scope="col">Label</th><th scope="col">Flags</th></tr></thead>
+            <tbody>{punches.map((p) => (
+              <tr key={p.row_number}><td>{p.row_number}</td><td>{p.local_ts.replace("T", " ")}</td><td>{p.status_label}</td><td>{p.flags.join(", ") || "—"}</td></tr>
+            ))}</tbody>
+          </table>
+        </div>
       </details>
     </figure>
   );

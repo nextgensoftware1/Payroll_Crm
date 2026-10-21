@@ -6,7 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { readFirstSheet } from "../src/server/zkteco/biff.ts";
 import { detectFlags } from "../src/server/zkteco/flags.ts";
-import { compileFormat, detect, okRows, parse, ParseError } from "../src/server/zkteco/parser.ts";
+import { compileFormat, detect, headerMap, okRows, parse, parseSalaryPkr, ParseError } from "../src/server/zkteco/parser.ts";
 import { SAMPLE } from "./harness.ts";
 
 const FMT = "M/D/YYYY h:mm:ss AM", LABELS = { "C/In": "in", "C/Out": "out" };
@@ -76,6 +76,23 @@ test("TSV and non-UTF-8 CSV", () => {
 test("quoted CSV fields with commas", () => {
   const pf = parse(csv([["Co", '"Khan, Ali"', "9", "8/2/2026 6:00:00 PM", "C/In", "101", "", "0", "FP", ""]]), opts);
   assert.equal(okRows(pf)[0]!.name, "Khan, Ali");
+});
+
+test("monthly salary headers and comma-formatted PKR values are recognized", () => {
+  const cols = headerMap(["No.", "Monthly salary (PKR, dummy)"]);
+  assert.equal(cols.salary, 1);
+  assert.equal(parseSalaryPkr("52,000"), 52000);
+  assert.equal(parseSalaryPkr("PKR 52,000"), 52000);
+  assert.equal(parseSalaryPkr(""), null);
+  assert.equal(parseSalaryPkr("not set"), null);
+  assert.equal(parseSalaryPkr("10,000,001"), null);
+
+  const file = new TextEncoder().encode([
+    "No.,Name,Date/Time,Status,Monthly salary (PKR, dummy)",
+    '1,Moon,8/1/2026 5:00:00 PM,C/In,"52,000"',
+  ].join("\n"));
+  const parsed = parse(file, opts);
+  assert.equal(parsed.rows[1]!.cells[4], "52,000");
 });
 
 test("day/month ambiguity is flagged, not guessed", () => {

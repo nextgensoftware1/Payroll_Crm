@@ -49,7 +49,7 @@ export function ChartCard({ title, legend, children, table, className = "" }:
   { title: string; legend?: React.ReactNode; children: React.ReactNode; table?: React.ReactNode; className?: string }) {
   const [mode, setMode] = useState<"chart" | "table">("chart");
   return (
-    <section className={`panel flex flex-col p-4 ${className}`}>
+    <section className={`panel flex min-w-0 flex-col p-4 ${className}`}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-[15px] font-semibold">{title}</h2>
         {table ? (

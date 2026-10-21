@@ -45,6 +45,7 @@ const ALIASES: Record<string, string[]> = {
   verify: ["verifycode", "verify code", "verify type", "verify mode", "verification"],
   location: ["location id", "machine id", "device id", "terminal"],
   workcode: ["workcode", "work code"],
+  salary: ["salary", "monthly salary", "monthly salary pkr", "monthly salary (pkr)", "monthly salary (pkr, dummy)", "salary pkr", "salary (pkr)"],
 };
 
 // ------------------------------------------------------------ detection
@@ -166,6 +167,13 @@ export function headerMap(header: string[]): Record<string, number> {
     if (idx !== -1) found[key] = idx;
   }
   return found;
+}
+
+export function parseSalaryPkr(value: string): number | null {
+  const normalized = value.trim().replace(/^(?:PKR|Rs\.?)\s*/i, "").replace(/[,\s]/g, "");
+  if (!/^\d+$/.test(normalized)) return null;
+  const amount = Number(normalized);
+  return Number.isSafeInteger(amount) && amount <= 10_000_000 ? amount : null;
 }
 
 /** Bytes -> raw table of strings (first row = header), whatever the format. */

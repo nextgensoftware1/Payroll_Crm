@@ -18,8 +18,12 @@ const SORTS = [["deduction", "Highest deductions"], ["late", "Most late days"], 
 export default async function Reports({ searchParams }: { searchParams: SP }) {
   const sp = await searchParams;
   const data = await withSession(async (c) => {
-    const month = sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : await latestPunchMonth(c);
-    const [ref, shifts, everyone] = [await reference(c), await shiftOptions(c), await monthReport(c, { month })];
+    const [month, ref, shifts] = await Promise.all([
+      sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? Promise.resolve(sp.month) : latestPunchMonth(c),
+      reference(c),
+      shiftOptions(c),
+    ]);
+    const everyone = await monthReport(c, { month });
     const filtered = everyone.people.filter((p) =>
       (!sp.employee || p.employee_id === sp.employee) && (!sp.department || p.department === sp.department) && (!sp.shift || p.shift?.code === sp.shift));
     return { month, ref, shifts, policy: everyone.policy, all: everyone.people, people: filtered };
