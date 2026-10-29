@@ -1,4 +1,4 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { unstable_rethrow } from "next/navigation";
 import { Suspense } from "react";
 import { HeaderBar } from "@/components/HeaderBar";
@@ -11,6 +11,7 @@ import { listApprovals } from "@/server/services/approvals";
 import { me } from "@/server/services/dashboard";
 import { markAllRead, myNotifications } from "@/server/services/notifications";
 import { monthChoices } from "@/server/services/reports";
+import { createPerfTraceId, measure, runWithPerfTrace } from "@/server/perf";
 
 async function markRead() {
   "use server";
@@ -20,15 +21,17 @@ async function markRead() {
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   let data;
   try {
-    data = await withSession(async (c) => {
-      const [person, approvals, notes, choices] = await Promise.all([
-        me(c),
-        listApprovals(c, { mine: true, limit: 200 }),
-        myNotifications(c),
-        c.isStaff ? monthChoices(c) : Promise.resolve({ latest: "", months: [] }),
-      ]);
-      return { me: person, pending: approvals.length, notes, months: choices.months, latest: choices.latest };
-    });
+    const traceId = (await headers()).get("x-empire-perf-trace") ?? createPerfTraceId();
+    data = await runWithPerfTrace(traceId, () => withSession(async (c) =>
+      measure("layout.page", async () => {
+        const [person, approvals, notes, choices] = await Promise.all([
+          me(c),
+          listApprovals(c, { mine: true, limit: 200 }),
+          myNotifications(c),
+          c.isStaff ? monthChoices(c) : Promise.resolve({ latest: "", months: [] }),
+        ]);
+        return { me: person, pending: approvals.length, notes, months: choices.months, latest: choices.latest };
+      })));
   } catch (e) {
     unstable_rethrow(e);
     if (e instanceof AppError && e.code === "no_access")

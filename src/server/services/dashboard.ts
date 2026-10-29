@@ -1,6 +1,7 @@
 import "server-only";
 import { type Ctx, requireRole, today } from "../context.ts";
 import type { Tx } from "../db.ts";
+import { measure, measureQuery } from "../perf.ts";
 
 /** Approved value wins; a proposed value is returned with its status so
  *  callers can show that it is not yet approved. */
@@ -20,9 +21,15 @@ export type Summary = {
 
 export async function summary(ctx: Ctx): Promise<Summary> {
   requireRole(ctx, "admin", "hr");
+  return measure("dashboard.summary", () => buildSummary(ctx));
+}
+
+async function buildSummary(ctx: Ctx): Promise<Summary> {
   const t = today();
-  const lead = Number((await configValue(ctx.tx, "alerts.probation_contract_lead_days", t))?.value ?? 15);
-  const [s] = await ctx.tx<Omit<Summary, "expiring">[]>`
+  const configPromise = measureQuery("dashboard.summary.lead-days", () =>
+    configValue(ctx.tx, "alerts.probation_contract_lead_days", t));
+  const countsPromise = measureQuery("dashboard.summary.counts", () =>
+    ctx.tx<Omit<Summary, "expiring">[]>`
     select (select count(*) from hr.employee where status = 'active')::int as headcount_active,
            (select count(*) from hr.employee where status <> 'active')::int as headcount_inactive,
            (select count(*) from hr.document_exceptions)::int as missing_documents,
@@ -31,16 +38,19 @@ export async function summary(ctx: Ctx): Promise<Summary> {
            (select count(*) from hr.attendance_import_batch where status = 'under_review')::int as batches_under_review,
            (select count(*) from hr.approval_request where status = 'pending')::int as pending_approvals,
            (select count(*) from hr.approval_request where status = 'pending'
-              and requested_by <> hr.current_auth_user() and hr.has_role(required_role))::int as pending_my_decision`;
-  const expiring = await ctx.tx<Summary["expiring"]>`
+              and requested_by <> hr.current_auth_user() and hr.has_role(required_role))::int as pending_my_decision`
+  );
+  const [leadRow, counts] = await Promise.all([configPromise, countsPromise]);
+  const lead = Number(leadRow?.value ?? 15);
+  const expiring = await measureQuery("dashboard.summary.expiring", () => ctx.tx<Summary["expiring"]>`
     select e.id as employee_id, e.employee_code, e.full_name, x.kind, x.end_date, (x.end_date - ${t}::date) as days_remaining
     from (select employee_id, 'probation_end' as kind, probation_end as end_date from hr.current_probation
           union all
           select employee_id, 'contract_end', contract_end from hr.current_contract where contract_end is not null) x
     join hr.employee e on e.id = x.employee_id and e.status = 'active'
     where x.end_date between ${t}::date and ${t}::date + ${lead}::int
-    order by x.end_date`;
-  return { ...s!, expiring };
+    order by x.end_date`);
+  return { ...counts[0]!, expiring };
 }
 
 export type Reference = {
@@ -59,9 +69,12 @@ export async function reference(ctx: Ctx): Promise<Reference> {
 }
 
 export async function me(ctx: Ctx) {
-  const [row] = ctx.employeeId
-    ? await ctx.tx<{ full_name: string }[]>`select full_name from hr.employee where id = ${ctx.employeeId}`
-    : [];
+  let row: { full_name: string } | undefined;
+  if (ctx.employeeId) {
+    const rows = await measureQuery("dashboard.me.employee", () =>
+      ctx.tx<{ full_name: string }[]>`select full_name from hr.employee where id = ${ctx.employeeId}`);
+    row = rows[0];
+  }
   return { userId: ctx.principal.userId, email: ctx.principal.email, roles: [...ctx.roles].sort(),
            employeeId: ctx.employeeId, employeeName: row?.full_name ?? null };
 }

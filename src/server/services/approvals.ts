@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { type Ctx, requireRole } from "../context.ts";
 import { AppError, notFound } from "../errors.ts";
+import { measureQuery } from "../perf.ts";
 
 /** Approvals centre. The decision INSERT is where the real checks happen
  *  (hr.on_approval_decision trigger: role, segregation of duties, pending
@@ -17,7 +18,7 @@ export type Approval = {
 };
 
 export async function listApprovals(ctx: Ctx, f: { status?: string | null; mine?: boolean; limit?: number } = {}): Promise<Approval[]> {
-  return ctx.tx<Approval[]>`
+  return measureQuery("layout.approvals", () => ctx.tx<Approval[]>`
     select r.id, r.kind::text as kind, r.status::text as status, r.required_role::text as required_role, r.reason,
            r.requested_at, req.full_name as requested_by_name, r.subject_table, r.subject_id,
            r.subject_employee_id, se.full_name as subject_employee_name, d.reason as decision_reason, r.decided_at,
@@ -54,7 +55,7 @@ export async function listApprovals(ctx: Ctx, f: { status?: string | null; mine?
     where (${f.status ?? null}::text is null or r.status::text = ${f.status ?? null}::text)
       and (not ${f.mine ?? false}::boolean or (r.status = 'pending' and r.requested_by <> hr.current_auth_user() and hr.has_role(r.required_role)))
     order by r.status = 'pending' desc, r.requested_at desc
-    limit ${Math.min(f.limit ?? 100, 200)}`;
+    limit ${Math.min(f.limit ?? 100, 200)}`);
 }
 
 // Kinds whose subject carries its own status. Everything else derives its
@@ -103,7 +104,8 @@ export async function decide(ctx: Ctx, approvalId: string, input: z.input<typeof
 /** Single-admin mode (owner decision): when ON, requests are approved
  *  straight away by the System actor, through the same database checks. */
 export async function singleAdminMode(ctx: Ctx): Promise<boolean> {
-  const [r] = await ctx.tx<{ on: boolean }[]>`select hr.flag_enabled('single_admin_mode') as on`;
+  const [r] = await measureQuery("dashboard.single-admin-mode", () =>
+    ctx.tx<{ on: boolean }[]>`select hr.flag_enabled('single_admin_mode') as on`);
   return Boolean(r?.on);
 }
 

@@ -36,14 +36,14 @@ async function buildOverview(ctx: Ctx, requestedMonth: string | null, day?: stri
   const month = requestedMonth ?? choices!.latest;
   const previousMonth = prevMonth(month);
   const initial = await measure("dashboard.initial-reports", () => Promise.all([
-    monthReport(ctx, { month }),
-    monthReport(ctx, { month: previousMonth }),
+    measure(`dashboard.current-report:${month}`, () => monthReport(ctx, { month })),
+    measure(`dashboard.previous-report:${previousMonth}`, () => monthReport(ctx, { month: previousMonth })),
     choices ? Promise.resolve(choices.months) : monthsWithPunches(ctx),
   ]));
   const [rep, prev, availableMonths] = initial;
   const cur = totals(rep), before = prev.people.length ? totals(prev) : null;
-  const payPromise = payrollStatusMonth(ctx, month);
-  const activityPromise = measureQuery("dashboard.activity", () =>
+  const payPromise = measure("dashboard.payroll-status", () => payrollStatusMonth(ctx, month));
+  const activityPromise = measure("dashboard.activity", () => measureQuery("dashboard.activity.query", () =>
     ctx.tx<{ at: string; kind: string; title: string; detail: string }[]>`
     select * from (
       select b.reviewed_at as at, 'import' as kind, 'Attendance import completed' as title,
@@ -58,14 +58,14 @@ async function buildOverview(ctx: Ctx, requestedMonth: string | null, day?: stri
       select pc.created_at, 'rule', 'Rule updated', replace(pc.key, '_', ' ') || ' = ' || pc.value::text
       from hr.policy_config pc where pc.source_reference like 'Changed in Settings%'
     ) x where at is not null order by at desc limit 6`
-  );
+  ));
 
   // 6-month trend from months that actually have data (never an invented percentage)
   const months = availableMonths.filter((m) => m <= month).slice(0, 6).reverse();
-  const trendReports: Rep[] = await measure("dashboard.trend-reports", () => Promise.all(months.map((m) =>
+  const trendReports: Rep[] = await measure(`dashboard.trend-reports:${months.length}-months`, () => Promise.all(months.map((m) =>
     m === month ? Promise.resolve(rep)
       : m === previousMonth ? Promise.resolve(prev)
-      : monthReport(ctx, { month: m }),
+      : measure(`dashboard.trend-report:${m}`, () => monthReport(ctx, { month: m })),
   )));
   const trend = months.map((m, i) => {
     const t = totals(trendReports[i]!);

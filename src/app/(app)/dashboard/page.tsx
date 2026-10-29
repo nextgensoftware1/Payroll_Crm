@@ -1,6 +1,7 @@
 import { AlertTriangle, Banknote, CalendarClock, CheckCircle2, ClipboardCheck, Clock3, FileUp, Info, Receipt, Settings2, ShieldAlert, UserPlus, Users, Wallet } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { headers } from "next/headers";
 import { AttendanceByDay, ChartCard, DeductionsByEmployee, Dot, FinancialTrend, Sparkline, StatusDonut } from "@/components/charts";
 import { MonthCalendar } from "@/components/MonthCalendar";
 import { Register } from "@/components/Register";
@@ -9,6 +10,7 @@ import { withSession } from "@/server/session";
 import { singleAdminMode } from "@/server/services/approvals";
 import { me as getMe, summary } from "@/server/services/dashboard";
 import { overview } from "@/server/services/overview";
+import { createPerfTraceId, measure, runWithPerfTrace } from "@/server/perf";
 
 export const metadata: Metadata = { title: "Overview" };
 const P = (p: number) => (p / 100).toLocaleString("en-PK", { maximumFractionDigits: 0 });
@@ -25,15 +27,17 @@ function Delta({ now, before, goodWhenUp, prevMonth }: { now: number; before: nu
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ month?: string; day?: string }> }) {
   const sp = await searchParams;
-  const d = await withSession(async (c) => {
-    const [o, s, auto, me] = await Promise.all([
-      overview(c, sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : null, sp.day),
-      summary(c),
-      singleAdminMode(c),
-      getMe(c),
-    ]);
-    return { o, s, auto, me };
-  }, { roles: ["admin", "hr"] });
+  const traceId = (await headers()).get("x-empire-perf-trace") ?? createPerfTraceId();
+  const d = await runWithPerfTrace(traceId, () => withSession(async (c) =>
+    measure("dashboard.page", async () => {
+      const [o, s, auto, me] = await Promise.all([
+        overview(c, sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : null, sp.day),
+        summary(c),
+        singleAdminMode(c),
+        getMe(c),
+      ]);
+      return { o, s, auto, me };
+    }), { roles: ["admin", "hr"] }));
   if (d.auto && d.s.batches_under_review > 0) processImportsInBackground();
   const { o } = d; const k = o.kpi; const pv = k.prev ?? undefined;
   const prevLabel = o.trend.length > 1 ? new Intl.DateTimeFormat("en-GB", { month: "short", timeZone: "UTC" }).format(new Date(`${o.trend.at(-2)!.month}-01T00:00:00Z`)) : "last month";
