@@ -10,7 +10,7 @@ import { act, withSession } from "@/server/session";
 import { listApprovals } from "@/server/services/approvals";
 import { me } from "@/server/services/dashboard";
 import { markAllRead, myNotifications } from "@/server/services/notifications";
-import { latestPunchMonth, monthsWithPunches } from "@/server/services/reports";
+import { monthChoices } from "@/server/services/reports";
 
 async function markRead() {
   "use server";
@@ -21,14 +21,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   let data;
   try {
     data = await withSession(async (c) => {
-      const [person, approvals, notes, months, latest] = await Promise.all([
+      const [person, approvals, notes, choices] = await Promise.all([
         me(c),
         listApprovals(c, { mine: true, limit: 200 }),
         myNotifications(c),
-        c.isStaff ? monthsWithPunches(c) : Promise.resolve([]),
-        c.isStaff ? latestPunchMonth(c) : Promise.resolve(""),
+        c.isStaff ? monthChoices(c) : Promise.resolve({ latest: "", months: [] }),
       ]);
-      return { me: person, pending: approvals.length, notes, months, latest };
+      return { me: person, pending: approvals.length, notes, months: choices.months, latest: choices.latest };
     });
   } catch (e) {
     unstable_rethrow(e);
@@ -38,7 +37,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <div className="max-w-md">
             <h1 className="text-xl font-bold">Your account has no access yet</h1>
             <p className="mt-2 text-ink-2">An Admin needs to link your login to your employee record. Contact HR.</p>
-            <form action={signOut} className="mt-4"><button className="btn-quiet">Sign out</button></form>
+            <form action={signOut} method="post" className="mt-4"><button className="btn-quiet" type="submit">Sign out</button></form>
           </div>
         </main>);
     throw e;

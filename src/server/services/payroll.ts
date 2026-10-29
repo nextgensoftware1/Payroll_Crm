@@ -5,6 +5,7 @@ import { type Ctx, requireRole } from "../context.ts";
 import { AppError, notFound } from "../errors.ts";
 import { approveNowIfAllowed, singleAdminMode } from "./approvals.ts";
 import { monthReport } from "./reports.ts";
+import { measure, measureQuery } from "../perf.ts";
 
 /** Monthly payroll: calculate -> (review) -> approve and LOCK -> payslips.
  *
@@ -45,6 +46,11 @@ async function currentRun(ctx: Ctx, periodId: string): Promise<Run | null> {
 
 /** Create or refresh the DRAFT run for a month from the live attendance report. */
 export async function calculate(ctx: Ctx, monthInput: string) {
+  const month = MONTH.parse(monthInput);
+  return measure(`payroll-calculate:${month}`, () => calculateInner(ctx, month));
+}
+
+async function calculateInner(ctx: Ctx, monthInput: string) {
   requireRole(ctx, "admin", "hr");
   const month = MONTH.parse(monthInput);
   const periodId = await ensurePeriod(ctx, month);
@@ -62,6 +68,13 @@ export async function calculate(ctx: Ctx, monthInput: string) {
   const rep = await monthReport(ctx, { month });
   const seen = new Set<string>();
   let lines = 0;
+  const payload: {
+    employee_id: string; scheduled_days: number; eligible_days: number; base_monthly_paisa: number;
+    prorated_base_paisa: number;
+    components: { kind: string; days?: number; minutes?: number; amount_paisa?: number; note?: string }[];
+    gross_paisa: number; total_deductions_paisa: number; net_paisa: number;
+    exceptions_snapshot: { kind: string; days?: number; note?: string }[];
+  }[] = [];
   for (const p of rep.people) {
     if (p.salary_paisa === null) continue;
     const t = p.result.totals;
@@ -85,26 +98,52 @@ export async function calculate(ctx: Ctx, monthInput: string) {
     ];
     const eligible = Math.max(0, employed - t.absent);
     const row = { base: p.salary_paisa, gross, cuts, net: gross - cuts, sched: Math.max(1, full), elig: Math.min(eligible, Math.max(1, full)) };
-    const upd = await ctx.tx`
-      update hr.payroll_line set base_monthly_paisa = ${row.base}, prorated_base_paisa = ${row.gross}, gross_paisa = ${row.gross},
-             total_deductions_paisa = ${row.cuts}, net_paisa = ${row.net}, scheduled_days = ${row.sched}, eligible_days = ${row.elig},
-             components = ${ctx.tx.json(components)}, exceptions_snapshot = ${ctx.tx.json(exceptions)}
-      where run_id = ${run.id} and employee_id = ${p.employee_id}`;
-    if (!upd.count)
-      await ctx.tx`
-        insert into hr.payroll_line (run_id, employee_id, attendance_computation_ids, scheduled_days, eligible_days, base_monthly_paisa,
-                                     prorated_base_paisa, components, gross_paisa, total_deductions_paisa, net_paisa, exceptions_snapshot)
-        values (${run.id}, ${p.employee_id}, '{}', ${row.sched}, ${row.elig}, ${row.base}, ${row.gross}, ${ctx.tx.json(components)},
-                ${row.gross}, ${row.cuts}, ${row.net}, ${ctx.tx.json(exceptions)})`;
+    payload.push({
+      employee_id: p.employee_id, scheduled_days: row.sched, eligible_days: row.elig,
+      base_monthly_paisa: row.base, prorated_base_paisa: row.gross, components,
+      gross_paisa: row.gross, total_deductions_paisa: row.cuts, net_paisa: row.net,
+      exceptions_snapshot: exceptions,
+    });
     seen.add(p.employee_id);
     lines++;
   }
-  // people who dropped out since the last calculation (e.g. salary removed): zeroed, never deleted
-  const stale = await ctx.tx<{ employee_id: string }[]>`select employee_id from hr.payroll_line where run_id = ${run.id}`;
-  for (const s of stale.filter((x) => !seen.has(x.employee_id)))
-    await ctx.tx`update hr.payroll_line set gross_paisa = 0, prorated_base_paisa = 0, total_deductions_paisa = 0, net_paisa = 0, eligible_days = 0,
-                 components = ${ctx.tx.json([{ kind: "excluded", amount_paisa: 0, note: "no salary for this month" }])}
-                 where run_id = ${run.id} and employee_id = ${s.employee_id}`;
+  if (payload.length) {
+    await ctx.tx`
+      insert into hr.payroll_line (
+        run_id, employee_id, attendance_computation_ids, scheduled_days, eligible_days,
+        base_monthly_paisa, prorated_base_paisa, components, gross_paisa,
+        total_deductions_paisa, net_paisa, exceptions_snapshot
+      )
+      select ${run.id}, x.employee_id, '{}', x.scheduled_days, x.eligible_days,
+             x.base_monthly_paisa, x.prorated_base_paisa, x.components, x.gross_paisa,
+             x.total_deductions_paisa, x.net_paisa, x.exceptions_snapshot
+      from jsonb_to_recordset(${ctx.tx.json(payload)}::jsonb) as x(
+        employee_id uuid, scheduled_days int, eligible_days numeric,
+        base_monthly_paisa bigint, prorated_base_paisa bigint, components jsonb,
+        gross_paisa bigint, total_deductions_paisa bigint, net_paisa bigint,
+        exceptions_snapshot jsonb
+      )
+      on conflict (run_id, employee_id) do update set
+        base_monthly_paisa = excluded.base_monthly_paisa,
+        prorated_base_paisa = excluded.prorated_base_paisa,
+        gross_paisa = excluded.gross_paisa,
+        total_deductions_paisa = excluded.total_deductions_paisa,
+        net_paisa = excluded.net_paisa,
+        scheduled_days = excluded.scheduled_days,
+        eligible_days = excluded.eligible_days,
+        components = excluded.components,
+        exceptions_snapshot = excluded.exceptions_snapshot`;
+  }
+  // People who dropped out since the last calculation (salary removed) are
+  // zeroed in one set-based update, preserving their line and audit snapshot.
+  const seenIds = [...seen];
+  await ctx.tx`
+    update hr.payroll_line set
+      gross_paisa = 0, prorated_base_paisa = 0, total_deductions_paisa = 0,
+      net_paisa = 0, eligible_days = 0,
+      components = '[{"kind":"excluded","amount_paisa":0,"note":"no salary for this month"}]'::jsonb
+    where run_id = ${run.id}
+      and (${seenIds.length === 0} or employee_id <> all(${seenIds}::uuid[]))`;
   return { runId: run.id, lines, missingSalary: rep.people.filter((p) => p.salary_paisa === null).map((p) => p.full_name) };
 }
 
@@ -156,6 +195,18 @@ export async function reopen(ctx: Ctx, runId: string, reason: string) {
     return { reopened: false as const };
   const [n] = await ctx.tx<{ id: string }[]>`select hr.reopen_payroll_run(${runId}, ${reason.trim()}, ${approvalId}) as id`;
   return { reopened: true as const, newRunId: n!.id };
+}
+
+export async function payrollStatusMonth(ctx: Ctx, monthInput: string) {
+  requireRole(ctx, "admin", "hr");
+  const month = MONTH.parse(monthInput);
+  const rows = await measureQuery("dashboard.payroll-status", () => ctx.tx<{ status: string | null; version: number | null }[]>`
+    select r.status::text as status, r.version as version
+    from hr.payroll_period p
+    join hr.payroll_run r on r.period_id = p.id and not r.is_sandbox
+    where p.period_month = ${`${month}-01`}::date and r.status <> 'superseded'
+    order by r.version desc limit 1`);
+  return { month, current: rows[0] ? { status: rows[0].status!, version: rows[0].version } : null };
 }
 
 export async function payrollMonth(ctx: Ctx, monthInput: string) {

@@ -2,7 +2,7 @@ import "server-only";
 import { computeMonth, type MonthResult, type Policy, type Shift } from "../attendance/engine.ts";
 import { type Ctx, requireRole } from "../context.ts";
 import { AppError } from "../errors.ts";
-import { configValue } from "./dashboard.ts";
+import { measure, measureQuery } from "../perf.ts";
 
 /** Monthly attendance + calculated deductions. Two queries (people, punches)
  *  then the pure engine in memory: fast even for hundreds of staff. */
@@ -24,9 +24,17 @@ export async function loadPolicy(ctx: Ctx, on: string): Promise<PolicyInfo> {
   const out = { ...DEFAULTS } as Policy;
   const pending: string[] = [];
   const entries = Object.entries(KEYS) as [keyof Policy, string][];
-  const values = await Promise.all(entries.map(([, key]) => configValue(ctx.tx, key, on)));
-  for (const [i, [k, key]] of entries.entries()) {
-    const v = values[i];
+  const keys = entries.map(([, key]) => key);
+  const rows = await measureQuery("report.policy", () => ctx.tx<{ key: string; value: unknown; status: string }[]>`
+    select distinct on (key) key, value, status::text as status
+    from hr.policy_config
+    where key = any(${keys}::text[])
+      and valid_during @> ${on}::date
+      and status in ('approved', 'proposed')
+    order by key, status = 'approved' desc, created_at desc`);
+  const byKey = new Map(rows.map((row) => [row.key, row]));
+  for (const [k, key] of entries) {
+    const v = byKey.get(key);
     if (v) out[k] = Number(v.value);
     if (!v || v.status !== "approved") pending.push(key);
   }
@@ -40,7 +48,8 @@ type Filters = { month: string; employeeId?: string | null; departmentId?: strin
 /** HR/Admin: everyone (or filtered). */
 export async function monthReport(ctx: Ctx, f: Filters) {
   requireRole(ctx, "admin", "hr");
-  return buildReport(ctx, f, false);
+  return measure(`month-report:${f.month}:${f.employeeId ? "1employee" : "all"}`, () =>
+    buildReport(ctx, f, false));
 }
 
 /** An employee's OWN month: same engine, same numbers as HR and payroll see.
@@ -56,9 +65,8 @@ async function buildReport(ctx: Ctx, f: Filters, self: boolean) {
   const start = `${f.month}-01`;
   const [y, m] = f.month.split("-").map(Number) as [number, number];
   const end = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
-  const policy = await loadPolicy(ctx, start);
-
-  const people = await ctx.tx<{
+  const policyPromise = loadPolicy(ctx, start);
+  const peoplePromise = measureQuery("report.people", () => ctx.tx<{
     employee_id: string; employee_code: string; full_name: string; department: string | null; department_id: string | null;
     shift_code: string | null; shift_name: string | null; start_min: number | null; duration_min: number | null; before_min: number | null;
     workdays: number[] | null; salary_paisa: string | null; salary_status: string | null; joining_date: string; exit_date: string | null;
@@ -86,15 +94,16 @@ async function buildReport(ctx: Ctx, f: Filters, self: boolean) {
       and (${f.employeeId ?? null}::uuid is null or e.id = ${f.employeeId ?? null}::uuid)
       and (${f.departmentId ?? null}::uuid is null or a.department_id = ${f.departmentId ?? null}::uuid)
       and (${f.shiftCode ?? null}::text is null or sh.code = ${f.shiftCode ?? null}::text)
-    order by e.employee_code`;
+    order by e.employee_code`);
+  const [policy, people] = await Promise.all([policyPromise, peoplePromise]);
   if (!people.length) return { policy, people: [] as ReportPerson[], month: f.month };
 
   const ids = people.map((p) => p.employee_id);
   // punches: generous window (previous evening to the morning after), engine assigns exact business dates
   const punches: Promise<{ employee_id: string; ts: string }[]> = self
-    ? ctx.tx<{ ts: string }[]>`select ts from hr.my_punches(${start}::timestamp - interval '1 day', ${end}::timestamp + interval '2 days')`
+    ? measureQuery("report.punches", () => ctx.tx<{ ts: string }[]>`select ts from hr.my_punches(${start}::timestamp - interval '1 day', ${end}::timestamp + interval '2 days')`)
         .then((rows) => rows.map((r) => ({ employee_id: ctx.employeeId!, ts: r.ts })))
-    : ctx.tx<{ employee_id: string; ts: string }[]>`
+    : measureQuery("report.punches", () => ctx.tx<{ employee_id: string; ts: string }[]>`
     select pm.employee_id, p.device_local_ts as ts
     from hr.raw_punch p
     join hr.punch_mapping pm on pm.device_id = p.device_id and pm.enrollment_no = p.enrollment_no
@@ -103,18 +112,18 @@ async function buildReport(ctx: Ctx, f: Filters, self: boolean) {
       and pm.employee_id = any(${ids}::uuid[])
       and not exists (select 1 from hr.attendance_correction c where c.target_raw_punch_id = p.id
                       and c.kind = 'disregard_punch' and hr.is_approved(c.approval_request_id))
-    order by p.device_local_ts`;
-  const leavePromise: Promise<{ employee_id: string; d: string; paid: boolean }[]> = ctx.tx`
+    order by p.device_local_ts`);
+  const leavePromise: Promise<{ employee_id: string; d: string; paid: boolean }[]> = measureQuery("report.leave", () => ctx.tx`
     select lr.employee_id, gs::date::text as d, lt.is_paid as paid from hr.leave_request lr
     join hr.leave_type lt on lt.id = lr.leave_type_id
     cross join generate_series(greatest(lr.start_date, ${start}::date), least(lr.end_date, ${end}::date), interval '1 day') gs
-    where lr.employee_id = any(${ids}::uuid[]) and hr.is_approved(lr.approval_request_id)`;
-  const excusesPromise: Promise<{ employee_id: string; d: string; kind: string; added: string | null }[]> = ctx.tx`
+    where lr.employee_id = any(${ids}::uuid[]) and hr.is_approved(lr.approval_request_id)`);
+  const excusesPromise: Promise<{ employee_id: string; d: string; kind: string; added: string | null }[]> = measureQuery("report.excuses", () => ctx.tx`
     select employee_id, business_date::text as d, kind, added_punch_local as added from hr.attendance_excuse
-    where employee_id = any(${ids}::uuid[]) and business_date between ${start}::date - 1 and ${end}::date and hr.is_approved(approval_request_id)`;
-  const holidaysPromise: Promise<{ d: string; employee_id: string | null }[]> = ctx.tx`
+    where employee_id = any(${ids}::uuid[]) and business_date between ${start}::date - 1 and ${end}::date and hr.is_approved(approval_request_id)`);
+  const holidaysPromise: Promise<{ d: string; employee_id: string | null }[]> = measureQuery("report.holidays", () => ctx.tx`
     select h.holiday_date::text as d, he.employee_id from hr.holiday h left join hr.holiday_employee he on he.holiday_id = h.id
-    where h.status = 'approved' and h.holiday_date between ${start}::date and ${end}::date`;
+    where h.status = 'approved' and h.holiday_date between ${start}::date and ${end}::date`);
   const [punchRows, leave, excuses, holidays] = await Promise.all([
     punches,
     leavePromise,
@@ -193,15 +202,33 @@ export async function shiftOptions(ctx: Ctx) {
 }
 
 export async function latestPunchMonth(ctx: Ctx): Promise<string> {
-  const [r] = await ctx.tx<{ m: string | null }[]>`select to_char(max(device_local_ts), 'YYYY-MM') as m from hr.raw_punch`;
+  const [r] = await measureQuery("report.latest-punch-month", () =>
+    ctx.tx<{ m: string | null }[]>`select to_char(max(device_local_ts), 'YYYY-MM') as m from hr.raw_punch`);
   return r?.m ?? nowKarachi().slice(0, 7);
 }
 
 /** Months that have recorded punches (newest first), for month pickers. */
 export async function monthsWithPunches(ctx: Ctx): Promise<string[]> {
-  const rows = await ctx.tx<{ m: string }[]>`
-    select distinct to_char(device_local_ts, 'YYYY-MM') as m from hr.raw_punch order by m desc limit 36`;
+  const rows = await measureQuery("dashboard.available-months", () =>
+    ctx.tx<{ m: string }[]>`
+      select distinct to_char(device_local_ts, 'YYYY-MM') as m
+      from hr.raw_punch
+      order by m desc limit 36`);
   return rows.map((r) => r.m);
+}
+
+export async function monthChoices(ctx: Ctx): Promise<{ latest: string; months: string[] }> {
+  const rows = await measureQuery("dashboard.month-choices", () =>
+    ctx.tx<{ m: string }[]>`
+      select to_char(device_local_ts, 'YYYY-MM') as m
+      from hr.raw_punch
+      group by to_char(device_local_ts, 'YYYY-MM')
+      order by m desc
+      limit 36`);
+  return {
+    latest: rows[0]?.m ?? nowKarachi().slice(0, 7),
+    months: rows.map((row) => row.m),
+  };
 }
 
 /** Months the signed-in employee has punches in (newest first). */

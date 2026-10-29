@@ -7,6 +7,11 @@ const PUBLIC = ["/login", "/auth", "/api/cron"];  // cron routes check CRON_SECR
  *  signed-out users to /login. Authorisation itself is NOT done here: the
  *  API and Postgres RLS decide what each person may see. */
 export async function proxy(request: NextRequest) {
+  const path = request.nextUrl.pathname;
+  if (PUBLIC.some((p) => path === p || path.startsWith(`${p}/`))) {
+    return NextResponse.next({ request });
+  }
+
   let response = NextResponse.next({ request });
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -22,10 +27,11 @@ export async function proxy(request: NextRequest) {
       },
     },
   );
-  // getClaims() verifies the JWT signature (JWKS) instead of trusting the cookie
+  // getClaims() verifies the JWT signature (JWKS) instead of trusting the cookie.
+  // Skip this entirely for public routes so we do not pay the JWT verification cost
+  // on every request to /login or /auth, while still protecting the rest of the app.
   const { data } = await supabase.auth.getClaims();
-  const path = request.nextUrl.pathname;
-  if (!data?.claims && !PUBLIC.some((p) => path.startsWith(p))) {
+  if (!data?.claims) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", path);

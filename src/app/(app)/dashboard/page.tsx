@@ -9,7 +9,6 @@ import { withSession } from "@/server/session";
 import { singleAdminMode } from "@/server/services/approvals";
 import { me as getMe, summary } from "@/server/services/dashboard";
 import { overview } from "@/server/services/overview";
-import { latestPunchMonth } from "@/server/services/reports";
 
 export const metadata: Metadata = { title: "Overview" };
 const P = (p: number) => (p / 100).toLocaleString("en-PK", { maximumFractionDigits: 0 });
@@ -27,13 +26,12 @@ function Delta({ now, before, goodWhenUp, prevMonth }: { now: number; before: nu
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ month?: string; day?: string }> }) {
   const sp = await searchParams;
   const d = await withSession(async (c) => {
-    const [month, s, auto, me] = await Promise.all([
-      sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? Promise.resolve(sp.month) : latestPunchMonth(c),
+    const [o, s, auto, me] = await Promise.all([
+      overview(c, sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : null, sp.day),
       summary(c),
       singleAdminMode(c),
       getMe(c),
     ]);
-    const o = await overview(c, month, sp.day);
     return { o, s, auto, me };
   }, { roles: ["admin", "hr"] });
   if (d.auto && d.s.batches_under_review > 0) processImportsInBackground();

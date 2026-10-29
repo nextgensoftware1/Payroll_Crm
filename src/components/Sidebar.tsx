@@ -70,7 +70,7 @@ export function Sidebar({ roles, name, pending, theme, signOut, onNavigate, coll
           <span className="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 text-[13px] font-semibold text-white">{initials(name)}</span>
           {!collapsed ? <div className="min-w-0"><p className="truncate text-[14px] font-semibold text-white">{name}</p><p className="text-[12px]">{roleLabel}</p></div> : null}
         </div>
-        <form action={signOut}>
+        <form action={signOut} method="post">
           <button aria-label={collapsed ? "Sign out" : undefined} title={collapsed ? "Sign out" : undefined}
             className={`flex w-full items-center gap-2.5 rounded-lg py-2 text-[14px] hover:bg-white/6 hover:text-white ${collapsed ? "justify-center px-0" : "px-3"}`} type="submit">
             <LogOut aria-hidden className="size-[18px]" />{!collapsed ? "Sign out" : null}

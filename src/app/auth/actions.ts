@@ -21,6 +21,9 @@ export async function signIn(_: ActionState, form: FormData): Promise<ActionStat
 
 export async function signOut() {
   const supabase = await createClient();
-  await supabase.auth.signOut();
+  const { error } = await supabase.auth.signOut();
+  if (error) {
+    console.error("[empire-hr] sign-out failed:", error.message);
+  }
   redirect("/login");
 }

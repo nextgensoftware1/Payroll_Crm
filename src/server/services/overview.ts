@@ -1,8 +1,9 @@
 import "server-only";
 import { monthDays } from "../attendance/engine.ts";
 import { type Ctx, requireRole } from "../context.ts";
-import { payrollMonth } from "./payroll.ts";
-import { monthReport, monthsWithPunches } from "./reports.ts";
+import { payrollStatusMonth } from "./payroll.ts";
+import { monthChoices, monthReport, monthsWithPunches } from "./reports.ts";
+import { measure, measureQuery } from "../perf.ts";
 
 /** Everything the Overview shows, computed from real records with the same
  *  engine as Reports and Payroll, so every number agrees across screens. */
@@ -25,23 +26,47 @@ function totals(rep: Rep) {
   };
 }
 
-export async function overview(ctx: Ctx, month: string, day?: string | null) {
+export async function overview(ctx: Ctx, month: string | null, day?: string | null) {
   requireRole(ctx, "admin", "hr");
+  return measure(`dashboard:${month}`, () => buildOverview(ctx, month, day));
+}
+
+async function buildOverview(ctx: Ctx, requestedMonth: string | null, day?: string | null) {
+  const choices = requestedMonth ? null : await monthChoices(ctx);
+  const month = requestedMonth ?? choices!.latest;
   const previousMonth = prevMonth(month);
-  const [rep, prev, availableMonths] = await Promise.all([
+  const initial = await measure("dashboard.initial-reports", () => Promise.all([
     monthReport(ctx, { month }),
     monthReport(ctx, { month: previousMonth }),
-    monthsWithPunches(ctx),
-  ]);
+    choices ? Promise.resolve(choices.months) : monthsWithPunches(ctx),
+  ]));
+  const [rep, prev, availableMonths] = initial;
   const cur = totals(rep), before = prev.people.length ? totals(prev) : null;
+  const payPromise = payrollStatusMonth(ctx, month);
+  const activityPromise = measureQuery("dashboard.activity", () =>
+    ctx.tx<{ at: string; kind: string; title: string; detail: string }[]>`
+    select * from (
+      select b.reviewed_at as at, 'import' as kind, 'Attendance import completed' as title,
+             b.promoted_punches || ' punches recorded' || case when b.duplicate_punches > 0 then ', ' || b.duplicate_punches || ' already in' else '' end as detail
+      from hr.attendance_import_batch b where b.status = 'accepted' and b.promoted_punches is not null
+      union all
+      select a.approved_at, 'payroll', 'Payroll approved and locked', to_char(pp.period_month, 'FMMonth YYYY') || ', version ' || r.version
+      from hr.payroll_approval a join hr.payroll_run r on r.id = a.run_id join hr.payroll_period pp on pp.id = r.period_id
+      union all
+      select e.created_at, 'employee', 'New employee added', e.full_name || ' (' || e.employee_code || ')' from hr.employee e
+      union all
+      select pc.created_at, 'rule', 'Rule updated', replace(pc.key, '_', ' ') || ' = ' || pc.value::text
+      from hr.policy_config pc where pc.source_reference like 'Changed in Settings%'
+    ) x where at is not null order by at desc limit 6`
+  );
 
   // 6-month trend from months that actually have data (never an invented percentage)
   const months = availableMonths.filter((m) => m <= month).slice(0, 6).reverse();
-  const trendReports: Rep[] = await Promise.all(months.map((m) =>
+  const trendReports: Rep[] = await measure("dashboard.trend-reports", () => Promise.all(months.map((m) =>
     m === month ? Promise.resolve(rep)
       : m === previousMonth ? Promise.resolve(prev)
       : monthReport(ctx, { month: m }),
-  ));
+  )));
   const trend = months.map((m, i) => {
     const t = totals(trendReports[i]!);
     return { month: m, net: t.net, deductions: t.deductions, gross: t.gross, late: t.late, absent: t.absent, employees: t.employees };
@@ -75,23 +100,7 @@ export async function overview(ctx: Ctx, month: string, day?: string | null) {
       day: { status: d.status, in: d.firstIn, out: d.lastOut, lateMinutes: d.lateMinutes } };
   });
 
-  const [pay, activity] = await Promise.all([
-    payrollMonth(ctx, month),
-    ctx.tx<{ at: string; kind: string; title: string; detail: string }[]>`
-    select * from (
-      select b.reviewed_at as at, 'import' as kind, 'Attendance import completed' as title,
-             b.promoted_punches || ' punches recorded' || case when b.duplicate_punches > 0 then ', ' || b.duplicate_punches || ' already in' else '' end as detail
-      from hr.attendance_import_batch b where b.status = 'accepted' and b.promoted_punches is not null
-      union all
-      select a.approved_at, 'payroll', 'Payroll approved and locked', to_char(pp.period_month, 'FMMonth YYYY') || ', version ' || r.version
-      from hr.payroll_approval a join hr.payroll_run r on r.id = a.run_id join hr.payroll_period pp on pp.id = r.period_id
-      union all
-      select e.created_at, 'employee', 'New employee added', e.full_name || ' (' || e.employee_code || ')' from hr.employee e
-      union all
-      select pc.created_at, 'rule', 'Rule updated', replace(pc.key, '_', ' ') || ' = ' || pc.value::text
-      from hr.policy_config pc where pc.source_reference like 'Changed in Settings%'
-    ) x where at is not null order by at desc limit 6`,
-  ]);
+  const [pay, activity] = await Promise.all([payPromise, activityPromise]);
 
   return {
     month, focusDay, workingDays, policy: rep.policy,
